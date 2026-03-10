@@ -88,12 +88,13 @@ Hardware auto-exposure/gain delegated to camera SDK when supported.
 - [x] Brightness/contrast display controls (keyboard B/C focus, left/right adjust, display-only)
 - [x] Clean up test scripts (test_init*.py) — deleted, no longer needed
 - [x] Error dialogs for connection failures, recording errors, and binning failures
+- [x] Frame drop detection via sequence gap analysis (reported in session .txt and status bar)
 - [ ] ROI display overlay on live view
 - [ ] Crosshair overlay for focusing
 
 ## Future / deferred
 
-- [ ] High-performance ring buffer pipeline (zero-copy, backpressure)
+- [ ] High-performance ring buffer pipeline (zero-copy, backpressure) — decouples camera polling from disk I/O via a pre-allocated circular buffer on separate threads, absorbing brief I/O stalls without dropping frames.  Unlikely to be needed for most astro cameras on SSD storage at 8-bit; current simple pipeline handles full-resolution 40+ FPS to SER without issues.  Consider only if frame drop detection reports losses in practice.
 - [ ] Color camera support (debayer)
 - [x] MKV recording — lossless FFV1 via ffmpeg subprocess (8/16-bit mono, metadata embedded)
 - [ ] Software auto-exposure/gain fallback (Python-based, for cameras without hardware support)

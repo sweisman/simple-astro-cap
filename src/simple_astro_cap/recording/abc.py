@@ -32,6 +32,9 @@ class RecorderBase(FrameConsumer):
         self._min_interval: float = 0.0
         self._last_accept_time: float = 0.0
         self._rec_start_time: float = 0.0
+        self._frames_offered: int = 0
+        self._first_sequence: int = -1
+        self._last_sequence: int = -1
 
     @abstractmethod
     def start(self, path: Path, **kwargs: object) -> None:
@@ -81,7 +84,27 @@ class RecorderBase(FrameConsumer):
         self._min_interval = (1.0 / target_fps) if target_fps > 0 else 0.0
         self._last_accept_time = 0.0
         self._rec_start_time = time.monotonic()
+        self._frames_offered = 0
+        self._first_sequence = -1
+        self._last_sequence = -1
         self._recording = True
+
+    @property
+    def frames_offered(self) -> int:
+        """Total frames delivered to this recorder (before FPS gating)."""
+        return self._frames_offered
+
+    @property
+    def frames_dropped(self) -> int:
+        """Estimated frames lost before reaching this recorder.
+
+        Computed from gaps in the frame sequence numbers.  Returns 0 if
+        no sequence data is available.
+        """
+        if self._first_sequence < 0 or self._last_sequence < 0:
+            return 0
+        expected = self._last_sequence - self._first_sequence + 1
+        return max(0, expected - self._frames_offered)
 
     def on_frame(self, frame: Frame) -> None:
         if not self._recording:
@@ -92,6 +115,10 @@ class RecorderBase(FrameConsumer):
         if self._max_duration > 0 and self.elapsed >= self._max_duration:
             self.stop()
             return
+        self._frames_offered += 1
+        if self._first_sequence < 0:
+            self._first_sequence = frame.sequence
+        self._last_sequence = frame.sequence
         if self._min_interval > 0:
             now = time.monotonic()
             if (now - self._last_accept_time) < self._min_interval:

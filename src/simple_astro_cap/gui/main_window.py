@@ -792,6 +792,8 @@ class MainWindow(QMainWindow):
             self._recorder.stop()
         written = self._recorder.frames_written()
         fps = self._recorder.actual_fps
+        offered = self._recorder.frames_offered
+        dropped = self._recorder.frames_dropped
 
         # Advance session sequence: PNG uses one per frame, SER/MKV use one per session
         is_png = isinstance(self._recorder, PngRecorder)
@@ -802,17 +804,18 @@ class MainWindow(QMainWindow):
         save_settings(self._settings)
 
         # Write session summary txt
-        self._write_session_txt(written, fps, is_png)
+        self._write_session_txt(written, fps, is_png, offered, dropped)
 
         self._rec_meta = None
         self._recorder = None
         self._recording_panel.set_recording(False)
         self._camera_panel.set_recording(False)
-        self._status_rec.setText(f"Saved {written} frames ({fps:.1f} fps)")
-        log.info("Recording finished: %d frames, %.1f fps", written, fps)
+        drop_msg = f", {dropped} dropped" if dropped > 0 else ""
+        self._status_rec.setText(f"Saved {written} frames ({fps:.1f} fps{drop_msg})")
+        log.info("Recording finished: %d frames, %.1f fps, %d dropped", written, fps, dropped)
 
     def _write_session_txt(self, frames: int, actual_fps: float,
-                           is_png: bool) -> None:
+                           is_png: bool, offered: int, dropped: int) -> None:
         """Write a session summary text file."""
         meta = self._rec_meta
         if meta is None:
@@ -834,8 +837,12 @@ class MainWindow(QMainWindow):
         else:
             lines.append(f"sequence: {seq:06d}")
         elapsed = (end_time - meta["start_time"]).total_seconds()
+        skipped = offered - frames
         lines += [
-            f"frames: {frames}",
+            f"frames_written: {frames}",
+            f"frames_offered: {offered}",
+            f"frames_dropped: {dropped}",
+            f"frames_skipped: {skipped}",
             f"duration_s: {elapsed:.1f}",
             f"actual_fps: {actual_fps:.2f}",
         ]
