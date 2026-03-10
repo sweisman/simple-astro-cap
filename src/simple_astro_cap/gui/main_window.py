@@ -109,9 +109,11 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self._camera_panel)
 
         self._recording_panel = RecordingPanel()
+        sidebar_layout.addSpacing(6)
         sidebar_layout.addWidget(self._recording_panel)
 
         # Lens/Telescope
+        sidebar_layout.addSpacing(6)
         self._lens_group = QGroupBox("Lens/Telescope")
         lens_layout = QFormLayout(self._lens_group)
         lens_layout.setContentsMargins(4, 4, 4, 4)
