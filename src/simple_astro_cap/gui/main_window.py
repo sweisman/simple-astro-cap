@@ -833,6 +833,7 @@ class MainWindow(QMainWindow):
         fps = self._recorder.actual_fps
         offered = self._recorder.frames_offered
         dropped = self._recorder.frames_dropped
+        stop_reason = self._recorder.stop_reason
 
         # Advance session sequence: PNG uses one per frame, SER/MKV use one per session
         is_png = isinstance(self._recorder, PngRecorder)
@@ -850,8 +851,15 @@ class MainWindow(QMainWindow):
         self._recording_panel.set_recording(False)
         self._camera_panel.set_recording(False)
         drop_msg = f", {dropped} dropped" if dropped > 0 else ""
-        self._status_rec.setText(f"Saved {written} frames ({fps:.1f} fps{drop_msg})")
-        log.info("Recording finished: %d frames, %.1f fps, %d dropped", written, fps, dropped)
+        if stop_reason == "frame_limit":
+            reason_msg = "Frame limit reached. "
+        elif stop_reason == "time_limit":
+            reason_msg = "Time limit reached. "
+        else:
+            reason_msg = ""
+        self._status_rec.setText(f"{reason_msg}Saved {written} frames ({fps:.1f} fps{drop_msg})")
+        log.info("Recording finished: %d frames, %.1f fps, %d dropped, reason=%s",
+                 written, fps, dropped, stop_reason or "manual")
 
     def _write_session_txt(self, frames: int, actual_fps: float,
                            is_png: bool, offered: int, dropped: int) -> None:

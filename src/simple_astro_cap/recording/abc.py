@@ -35,6 +35,7 @@ class RecorderBase(FrameConsumer):
         self._frames_offered: int = 0
         self._first_sequence: int = -1
         self._last_sequence: int = -1
+        self._stop_reason: str = ""
 
     @abstractmethod
     def start(self, path: Path, **kwargs: object) -> None:
@@ -87,7 +88,13 @@ class RecorderBase(FrameConsumer):
         self._frames_offered = 0
         self._first_sequence = -1
         self._last_sequence = -1
+        self._stop_reason = ""
         self._recording = True
+
+    @property
+    def stop_reason(self) -> str:
+        """Why recording stopped: 'frame_limit', 'time_limit', or '' (manual)."""
+        return self._stop_reason
 
     @property
     def frames_offered(self) -> int:
@@ -110,9 +117,11 @@ class RecorderBase(FrameConsumer):
         if not self._recording:
             return
         if self._max_frames is not None and self._count >= self._max_frames:
+            self._stop_reason = "frame_limit"
             self.stop()
             return
         if self._max_duration > 0 and self.elapsed >= self._max_duration:
+            self._stop_reason = "time_limit"
             self.stop()
             return
         self._frames_offered += 1
