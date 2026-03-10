@@ -1,0 +1,61 @@
+This is the prompt I fed Claude Code (Opus 4.6, medium effort) to start the project.
+
+Took around 10 hours of clock time to get to the finished state in the first commit.
+
+===
+
+my boss gave me a QHY5III585M astro camera as a gift.
+
+even though this is an astro camera, i use it 90% or more for terrerstrial landscape infrared photography.
+
+i usually use a program astrodmx-capture, to control the camera and record data.
+
+this is not optimal for me. this program can control all aspects of astronomical observation. it's very complicated and cumbersome.
+
+i want a simple gui with a keyboard centric design to control just the camera and save data.
+
+the camera view should take up most of the screen.
+
+on the right, the camera options should be:
+select the camera
+bit depth (8 or 16 bits).
+text input to give a short one-line description of lens (saved in metadata)
+zoom (display only; doesn't affect recording)
+binning
+region of interest (record only doesn't affect display)
+checkbox to apply region of interest to display
+exposure time (microsec, ms, sec)
+checkbox to use auto-exposure if camera supports
+gain
+checkbox to use auto-gain if camera supports
+anything else commonly available in astro cameras that can be adjusted
+
+the recording options, below, also on the right:
+button to take a single image
+recording session options:
+record to png files/ser file
+text input for file name format
+record x fps (or max rate camera supports)
+record x frames (or manual control)
+button to start/stop recording
+
+i have the qhy camera. i also have a zwo camera.
+
+a skeleton can be written in python or whatever, but the high performance aspects certainly need something lower level. these cameras are capable of recording 40 and more fps of uncompressed 8 or 16 bit 4k-class images.
+
+astrodmx is installed locally at: /opt/AstroDMx-Capture/
+it has a web site: https://www.astrodmx-capture.org.uk/
+
+here are other programs that i researched before deciding on astrodmx:
+https://www.firecapture.de/
+http://deepskystacker.free.fr/english/index.html
+
+for now, i just want mono camera support.
+
+as we plan, i can flesh out how i want each region and option to behave. i want this to be keyboard centric and we can focus on keyboard operation to start, which should simplify some things.
+
+i guess the first thing is to verify is that, at the very least, the qhy and/or zwo camera libraries are available online. i think they are.
+
+second, how big is this task?
+
+third, is medium effort good enough?
