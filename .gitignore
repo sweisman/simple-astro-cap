@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Bundled native libraries and firmware (large binaries)
+lib/
+firmware/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# App output
+*.ser
+*.mkv
