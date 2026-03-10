@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a minimal, keyboard-centric camera capture application for QHY and ZWO astronomy cameras, replacing AstroDMx-Capture for simple terrestrial IR photography workflows.
+Build a minimal, keyboard-centric camera capture application for QHY and ZWO astronomy cameras, focused on simple terrestrial IR photography workflows.
 
 ## Phase 1: Core infrastructure (DONE)
 
@@ -11,7 +11,7 @@ Everything needed to capture frames from the camera and record them, without the
 - [x] Camera abstraction (`CameraBase` ABC, `Frame`, `Param`, `ROI`, `CameraInfo`)
 - [x] QHY SDK ctypes bindings (`sdk.py`, `constants.py`)
 - [x] QHY camera backend (`QhyCamera`) with full lifecycle support
-- [x] Bundled SDK dependency pre-loading (libusb, libstdc++, libgcc_s)
+- [x] SDK dependency pre-loading (libusb, libstdc++, libgcc_s from AstroDMx install)
 - [x] Pre-open pattern to avoid USB state corruption on close
 - [x] Simulator backend (`SimCamera`) for testing without hardware
 - [x] Pipeline abstractions (`FrameConsumer`, `FrameProducer`)
@@ -45,7 +45,7 @@ PySide6 GUI with live view and sidebar controls.
 - [x] Recording locks — only zoom, exposure, gain adjustable during recording
 - [x] ZWO ASI camera backend (`AsiCamera` via ctypes to `libASICamera2.so`)
 - [x] MultiCamera aggregator (discovers and delegates across QHY + ZWO backends)
-- [x] Self-contained: libs and firmware bundled in project `lib/` and `firmware/` directories
+- [x] Libs and firmware in project `lib/` and `firmware/` directories (sourced from AstroDMx install)
 
 ## Phase 4: Keyboard navigation (DONE)
 
@@ -71,7 +71,7 @@ Hardware auto-exposure/gain delegated to camera SDK when supported.
 - [x] GUI: auto checkboxes disabled by default, enabled per camera capability on connect
 - [x] Keyboard: Ctrl+X / Ctrl+G toggle auto-exposure / auto-gain
 - [x] QHY backend: control ID 88 (0x58) via `SetQHYCCDParam` — SDK manages exposure + gain together
-- [ ] Software fallback: Python-based auto-exposure/gain for cameras without hardware support (deferred)
+- [x] Software auto-exposure: frame brightness analysis with proportional control, always available, mutually exclusive with hardware auto
 
 ## Phase 6: Polish and usability (IN PROGRESS)
 
@@ -97,7 +97,7 @@ Hardware auto-exposure/gain delegated to camera SDK when supported.
 - [ ] High-performance ring buffer pipeline (zero-copy, backpressure) — decouples camera polling from disk I/O via a pre-allocated circular buffer on separate threads, absorbing brief I/O stalls without dropping frames.  Unlikely to be needed for most astro cameras on SSD storage at 8-bit; current simple pipeline handles full-resolution 40+ FPS to SER without issues.  Consider only if frame drop detection reports losses in practice.
 - [ ] Color camera support (debayer)
 - [x] MKV recording — lossless FFV1 via ffmpeg subprocess (8/16-bit mono, metadata embedded)
-- [ ] Software auto-exposure/gain fallback (Python-based, for cameras without hardware support)
+- [x] Software auto-exposure (exposure-only, gain stays manual) — always available for any camera
 
 ---
 
@@ -124,7 +124,7 @@ Hardware auto-exposure/gain delegated to camera SDK when supported.
 - Recording locks all settings (format, dir, time, frame count, binning, orientation)
 - Actual recording FPS shown in status bar
 - Simulator mode for testing without hardware
-- Self-contained: bundled libs and firmware (no AstroDMx install needed)
+- Libs and firmware sourced from AstroDMx install; udev rules handle firmware loading
 
 ### What needs testing
 

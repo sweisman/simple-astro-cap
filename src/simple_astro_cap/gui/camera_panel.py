@@ -47,6 +47,7 @@ class CameraPanel(QGroupBox):
     orientation_changed = Signal(bool)  # True = portrait
     exposure_changed = Signal(float)  # microseconds
     auto_exposure_toggled = Signal(bool)
+    soft_auto_exposure_toggled = Signal(bool)
     gain_changed = Signal(float)
     auto_gain_toggled = Signal(bool)
 
@@ -162,10 +163,15 @@ class CameraPanel(QGroupBox):
         exp_layout.addRow(self.exposure_spin, self.exposure_unit_combo)
         add_field("exposure", "Exposure:", exp_widget)
 
-        self.auto_exposure_check = QCheckBox("Auto-exposure")
+        self.auto_exposure_check = QCheckBox("Auto-exposure (hardware)")
         self.auto_exposure_check.setEnabled(False)
         self.auto_exposure_check.setToolTip("Not supported by this camera")
         add_field("auto_exposure", "", self.auto_exposure_check)
+
+        self.soft_auto_exposure_check = QCheckBox("Auto-exposure (software)")
+        self.soft_auto_exposure_check.setEnabled(False)
+        self.soft_auto_exposure_check.setToolTip("Software auto-exposure based on frame brightness")
+        add_field("soft_auto_exposure", "", self.soft_auto_exposure_check)
 
         self.gain_spin = QDoubleSpinBox()
         self.gain_spin.setDecimals(0)
@@ -217,6 +223,7 @@ class CameraPanel(QGroupBox):
         self.exposure_spin.valueChanged.connect(self._on_exposure_changed)
         self.exposure_unit_combo.currentIndexChanged.connect(self._on_exposure_changed)
         self.auto_exposure_check.toggled.connect(self._on_auto_exposure_toggled)
+        self.soft_auto_exposure_check.toggled.connect(self._on_soft_auto_exposure_toggled)
         self.gain_spin.valueChanged.connect(lambda v: self.gain_changed.emit(v))
         self.auto_gain_check.toggled.connect(self._on_auto_gain_toggled)
 
@@ -421,9 +428,24 @@ class CameraPanel(QGroupBox):
     # --- Signal handlers ---
 
     def _on_auto_exposure_toggled(self, checked: bool) -> None:
-        self.exposure_spin.setEnabled(not checked)
-        self.exposure_unit_combo.setEnabled(not checked)
+        if checked:
+            # Mutual exclusion: disable software auto
+            self.soft_auto_exposure_check.blockSignals(True)
+            self.soft_auto_exposure_check.setChecked(False)
+            self.soft_auto_exposure_check.blockSignals(False)
+        self.exposure_spin.setEnabled(not checked and not self.soft_auto_exposure_check.isChecked())
+        self.exposure_unit_combo.setEnabled(not checked and not self.soft_auto_exposure_check.isChecked())
         self.auto_exposure_toggled.emit(checked)
+
+    def _on_soft_auto_exposure_toggled(self, checked: bool) -> None:
+        if checked:
+            # Mutual exclusion: disable hardware auto
+            self.auto_exposure_check.blockSignals(True)
+            self.auto_exposure_check.setChecked(False)
+            self.auto_exposure_check.blockSignals(False)
+        self.exposure_spin.setEnabled(not checked and not self.auto_exposure_check.isChecked())
+        self.exposure_unit_combo.setEnabled(not checked and not self.auto_exposure_check.isChecked())
+        self.soft_auto_exposure_toggled.emit(checked)
 
     def _on_auto_gain_toggled(self, checked: bool) -> None:
         self.gain_spin.setEnabled(not checked)
@@ -551,6 +573,7 @@ class CameraPanel(QGroupBox):
         self.exposure_spin.setEnabled(connected)
         self.exposure_unit_combo.setEnabled(connected)
         self.gain_spin.setEnabled(connected)
+        self.soft_auto_exposure_check.setEnabled(connected)
         self._set_postconnect_labels_enabled(connected)
         if not connected:
             # Reset auto checkboxes when disconnecting
@@ -558,6 +581,7 @@ class CameraPanel(QGroupBox):
             self.auto_exposure_check.setEnabled(False)
             self.auto_gain_check.setChecked(False)
             self.auto_gain_check.setEnabled(False)
+            self.soft_auto_exposure_check.setChecked(False)
 
     def set_recording(self, recording: bool) -> None:
         self.connect_btn.setEnabled(not recording)

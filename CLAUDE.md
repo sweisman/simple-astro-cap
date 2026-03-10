@@ -10,7 +10,7 @@ Camera capture application for QHY and ZWO astronomy cameras. See README.md for 
 - `from __future__ import annotations` in every module
 - Mono cameras only (no color/debayer support yet)
 - Exposure values always in microseconds internally; display conversion in `util/units.py`
-- Camera backends use ctypes to native SDK shared libraries bundled in `lib/`
+- Camera backends use ctypes to native SDK shared libraries in `lib/` (sourced from AstroDMx install)
 - No test suite — verify changes with `python -m py_compile` on all modified files
 
 ## Key patterns

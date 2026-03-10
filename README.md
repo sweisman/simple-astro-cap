@@ -4,7 +4,7 @@ A simple, keyboard-centric camera capture application for QHY and ZWO astronomy 
 
 ## Why
 
-AstroDMx-Capture is a powerful but complex application with many features that get in the way when all you need is a straightforward live view and recording tool. Simple Astro Cap strips things down to the essentials: connect a camera, see the live feed, adjust exposure and gain, and record frames to PNG, SER, or lossless MKV files. It's designed for terrestrial infrared photography with a QHY5III585M and ASI678MM, though the architecture supports other QHY and ZWO cameras.
+Most astronomy camera applications are designed for full astrophotography setups — filter wheels, automated tracking mounts, camera cooling, and complex session planning. For simple terrestrial infrared photography, all that gets in the way. Simple Astro Cap strips things down to the essentials: connect a camera, see the live feed, adjust exposure and gain, and record frames to PNG, SER, or lossless MKV files. It's designed for use with a QHY5III585M and ASI678MM, though the architecture supports other QHY and ZWO cameras.
 
 ## What
 
@@ -110,7 +110,7 @@ python run.py --sim
 ### Requirements
 
 - Python 3.11+
-- Camera SDK libraries are bundled in `lib/` (no external SDK install needed)
+- Camera SDK libraries in `lib/` and firmware in `firmware/` (sourced from [AstroDMx Capture](https://www.astrodmx-capture.org.uk/) install)
 - USB access to the camera (udev rules required)
 - Optional: ffmpeg for MKV recording
 

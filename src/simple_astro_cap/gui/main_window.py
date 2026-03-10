@@ -39,6 +39,7 @@ from simple_astro_cap.gui.histogram import HistogramWidget
 from simple_astro_cap.gui.live_view import LiveViewWidget, compute_zoom_steps
 from simple_astro_cap.gui.recording_panel import RecordingPanel
 from simple_astro_cap.settings import AppSettings, load_settings, save_settings
+from simple_astro_cap.pipeline.auto_exposure import SoftwareAutoExposure
 from simple_astro_cap.pipeline.simple import SimpleHarness
 from simple_astro_cap.recording.abc import RecorderBase
 from simple_astro_cap.recording.mkv_recorder import MkvRecorder
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
         self._histogram_counter = 0
         self._histogram_interval = 4  # update histogram every Nth frame
         self._last_frame: Frame | None = None
+        self._soft_auto: SoftwareAutoExposure | None = None
 
         self.setWindowTitle("Simple Astro Cap")
         self.setMinimumSize(1024, 600)
@@ -289,6 +291,7 @@ class MainWindow(QMainWindow):
         self._camera_panel.exposure_changed.connect(self._on_exposure_changed)
         self._camera_panel.gain_changed.connect(self._on_gain_changed)
         self._camera_panel.auto_exposure_toggled.connect(self._on_auto_exposure_toggled)
+        self._camera_panel.soft_auto_exposure_toggled.connect(self._on_soft_auto_exposure_toggled)
         self._camera_panel.auto_gain_toggled.connect(self._on_auto_gain_toggled)
 
         # Recording panel
@@ -402,6 +405,7 @@ class MainWindow(QMainWindow):
     def _on_disconnect(self) -> None:
         if self._auto_poll_timer.isActive():
             self._auto_poll_timer.stop()
+        self._remove_soft_auto()
         if self._recorder is not None:
             self._finish_recording()
         if self._harness and self._harness.is_running():
@@ -564,6 +568,9 @@ class MainWindow(QMainWindow):
 
     def _on_auto_exposure_toggled(self, enabled: bool) -> None:
         if self._camera.is_connected() and self._camera.supports_auto_exposure():
+            # Disable software auto if hardware auto is being enabled
+            if enabled and self._soft_auto is not None:
+                self._remove_soft_auto()
             try:
                 self._camera.set_auto_exposure(enabled)
             except Exception as e:
@@ -576,6 +583,28 @@ class MainWindow(QMainWindow):
                 self._camera_panel.auto_gain_check.setChecked(enabled)
                 self._camera_panel.auto_gain_check.blockSignals(False)
         self._update_auto_poll_timer()
+
+    def _on_soft_auto_exposure_toggled(self, enabled: bool) -> None:
+        if not self._camera.is_connected() or not self._harness:
+            return
+        if enabled:
+            # Disable hardware auto if it was on
+            if self._camera_panel.auto_exposure_check.isChecked():
+                self._camera_panel.auto_exposure_check.setChecked(False)
+            self._soft_auto = SoftwareAutoExposure(self._camera)
+            self._harness.add_consumer(self._soft_auto)
+            log.info("Software auto-exposure enabled")
+        else:
+            self._remove_soft_auto()
+        self._update_auto_poll_timer()
+
+    def _remove_soft_auto(self) -> None:
+        """Remove software auto-exposure controller from the pipeline."""
+        if self._soft_auto is not None:
+            if self._harness:
+                self._harness.remove_consumer(self._soft_auto)
+            self._soft_auto = None
+            log.info("Software auto-exposure disabled")
 
     def _on_auto_gain_toggled(self, enabled: bool) -> None:
         if self._camera.is_connected() and self._camera.supports_auto_gain():
@@ -597,7 +626,8 @@ class MainWindow(QMainWindow):
         need_poll = (
             self._camera.is_connected()
             and (self._camera_panel.auto_exposure_check.isChecked()
-                 or self._camera_panel.auto_gain_check.isChecked())
+                 or self._camera_panel.auto_gain_check.isChecked()
+                 or self._soft_auto is not None)
         )
         if need_poll and not self._auto_poll_timer.isActive():
             self._auto_poll_timer.start(500)
@@ -609,7 +639,8 @@ class MainWindow(QMainWindow):
         if not self._camera.is_connected():
             return
         try:
-            if self._camera_panel.auto_exposure_check.isChecked():
+            if (self._camera_panel.auto_exposure_check.isChecked()
+                    or self._soft_auto is not None):
                 us = self._camera.get_exposure()
                 self._camera_panel.display_exposure_us(us)
             if self._camera_panel.auto_gain_check.isChecked():
