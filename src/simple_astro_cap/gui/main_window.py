@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self._lens_group)
 
         # Display options
+        sidebar_layout.addSpacing(6)
         self._display_group = QGroupBox("Display")
         display_form = QFormLayout(self._display_group)
         display_form.setContentsMargins(4, 4, 4, 4)
