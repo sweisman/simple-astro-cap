@@ -4,7 +4,7 @@ A simple, keyboard-centric camera capture application for QHY and ZWO astronomy 
 
 ## Why
 
-AstroDMx-Capture is a powerful but complex application with many features that get in the way when all you need is a straightforward live view and recording tool. Simple Astro Cap strips things down to the essentials: connect a camera, see the live feed, adjust exposure and gain, and record frames to PNG or SER files. It's designed for terrestrial infrared photography with a QHY5III585M and ASI678MM, though the architecture supports other QHY and ZWO cameras.
+AstroDMx-Capture is a powerful but complex application with many features that get in the way when all you need is a straightforward live view and recording tool. Simple Astro Cap strips things down to the essentials: connect a camera, see the live feed, adjust exposure and gain, and record frames to PNG, SER, or lossless MKV files. It's designed for terrestrial infrared photography with a QHY5III585M and ASI678MM, though the architecture supports other QHY and ZWO cameras.
 
 ## What
 
