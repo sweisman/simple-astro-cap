@@ -495,14 +495,20 @@ class MainWindow(QMainWindow):
                 self._histogram.update_histogram(frame.data)
                 self._histogram_counter = 0
 
-        # Downsample for display when in fit-to-viewport mode
+        # Downsample for display when zoom < 100%
         display_data = frame.data
-        if self._live_view.zoom_scale is None:
+        scale = self._live_view.zoom_scale
+        if scale is None:
+            # Fit-to-viewport: compute step from viewport size
             vp = self._live_view.viewport().size()
             h, w = display_data.shape
             step = max(1, max(h // max(vp.height(), 1), w // max(vp.width(), 1)))
-            if step > 1:
-                display_data = np.ascontiguousarray(display_data[::step, ::step])
+        elif scale < 1.0:
+            step = max(1, int(1.0 / scale))
+        else:
+            step = 1
+        if step > 1:
+            display_data = np.ascontiguousarray(display_data[::step, ::step])
 
         # Apply brightness/contrast on (potentially smaller) data
         display_data = self._apply_display_adjustments(display_data)
