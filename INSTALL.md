@@ -119,8 +119,34 @@ If [AstroDMx Capture](https://www.astrodmx-capture.org.uk/) is installed at
 `/opt/AstroDMx-Capture/`, its udev rules already handle firmware loading and
 permissions for all supported QHY cameras. No additional setup is needed for QHY.
 
-You still need the ZWO ASI rules above if using ASI cameras. Player One and Touptek
-cameras may also need udev rules — check the manufacturer's SDK documentation.
+You still need the rules below for other camera brands.
+
+### Player One Cameras
+
+Create `/etc/udev/rules.d/99-playerone.rules`:
+
+```
+SUBSYSTEMS=="usb", ATTR{idVendor}=="a0a0", MODE="0666"
+```
+
+Player One cameras do not require firmware loading. The SDK library
+(`libPlayerOneCamera.so`) can be downloaded from the
+[Player One Astronomy website](https://player-one-astronomy.com/).
+
+### Touptek Cameras
+
+Create `/etc/udev/rules.d/99-touptek.rules`:
+
+```
+SUBSYSTEMS=="usb", ATTR{idVendor}=="0547", MODE="0666"
+SUBSYSTEMS=="usb", ATTR{idVendor}=="04b4", MODE="0666"
+```
+
+Touptek cameras do not require firmware loading. The SDK library
+(`libtoupcam.so`) can be downloaded from the
+[Touptek website](https://www.touptek.com/). Note that Touptek OEMs cameras
+under many brand names (Altair, Omegon, Bresser, Celestron, etc.) — these
+use the same SDK and udev rules.
 
 ### Applying udev rules
 
