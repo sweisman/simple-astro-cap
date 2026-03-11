@@ -734,19 +734,24 @@ class MainWindow(QMainWindow):
 
         seq = self._settings.snap_sequence
         timestamp = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
-        filename = f"{timestamp}-{seq:06d}.png"
+        snap_fmt = self._recording_panel.snap_format
 
         if frame.bit_depth <= 8:
             img = Image.fromarray(frame.data, mode="L")
         else:
             img = Image.fromarray(frame.data.astype(np.uint16), mode="I;16")
 
-        meta = PngInfo()
-        meta.add_text("Software", "Simple Astro Cap")
-        meta.add_text("BitDepth", str(frame.bit_depth))
-        if frame.timestamp_ns:
-            meta.add_text("TimestampNs", str(frame.timestamp_ns))
-        img.save(snap_dir / filename, pnginfo=meta)
+        if snap_fmt == "TIFF":
+            filename = f"{timestamp}-{seq:06d}.tiff"
+            img.save(snap_dir / filename, format="TIFF")
+        else:
+            filename = f"{timestamp}-{seq:06d}.png"
+            meta = PngInfo()
+            meta.add_text("Software", "Simple Astro Cap")
+            meta.add_text("BitDepth", str(frame.bit_depth))
+            if frame.timestamp_ns:
+                meta.add_text("TimestampNs", str(frame.timestamp_ns))
+            img.save(snap_dir / filename, pnginfo=meta)
 
         self._settings.snap_sequence = seq + 1
         save_settings(self._settings)
@@ -987,6 +992,9 @@ class MainWindow(QMainWindow):
         idx = self._recording_panel.format_combo.findText(s.format_name)
         if idx >= 0:
             self._recording_panel.format_combo.setCurrentIndex(idx)
+        idx = self._recording_panel.snap_format_combo.findText(s.snap_format)
+        if idx >= 0:
+            self._recording_panel.snap_format_combo.setCurrentIndex(idx)
 
         # Lens
         self._lens_edit.setText(s.lens_description)
@@ -1005,6 +1013,7 @@ class MainWindow(QMainWindow):
             bit_depth=self._camera_panel.selected_bit_depth,
             output_dir=self._recording_panel.output_dir_edit.text(),
             format_name=self._recording_panel.format_name,
+            snap_format=self._recording_panel.snap_format,
             lens_description=self._lens_edit.text(),
             sidebar_width=self._splitter.sizes()[1] if len(self._splitter.sizes()) > 1 else 250,
             snap_sequence=self._settings.snap_sequence,

@@ -69,10 +69,17 @@ class RecordingPanel(QGroupBox):
         self.frame_count_spin.setToolTip("Number of frames to record (0 = no limit)")
         layout.addRow("Frames:", self.frame_count_spin)
 
-        # Snap button
+        # Snap format + button
+        self.snap_format_combo = QComboBox()
+        self.snap_format_combo.addItems(["PNG", "TIFF"])
+        self.snap_format_combo.setToolTip("Snapshot image format")
         self.snap_btn = QPushButton("Snap [Space]")
         self.snap_btn.setToolTip("Capture a single frame")
-        layout.addRow(self.snap_btn)
+        snap_widget = QWidget()
+        snap_layout = QFormLayout(snap_widget)
+        snap_layout.setContentsMargins(0, 0, 0, 0)
+        snap_layout.addRow(self.snap_format_combo, self.snap_btn)
+        layout.addRow("Snap:", snap_widget)
 
         # Record button
         self.record_btn = QPushButton("Record [R]")
@@ -112,6 +119,7 @@ class RecordingPanel(QGroupBox):
         self.time_spin.setEnabled(not recording)
         self.frame_count_spin.setEnabled(not recording)
         self.snap_btn.setEnabled(not recording)
+        self.snap_format_combo.setEnabled(not recording)
 
     @property
     def output_dir(self) -> Path:
@@ -125,6 +133,10 @@ class RecordingPanel(QGroupBox):
     def max_time(self) -> float:
         """Recording duration in seconds, or 0 for no limit."""
         return float(self.time_spin.value())
+
+    @property
+    def snap_format(self) -> str:
+        return self.snap_format_combo.currentText()
 
     @property
     def max_frames(self) -> int | None:

@@ -21,6 +21,7 @@ class AppSettings:
     bit_depth: int = 8
     output_dir: str = "~/astro-captures"
     format_name: str = "SER"
+    snap_format: str = "PNG"
     lens_description: str = ""
     sidebar_width: int = 250
     snap_sequence: int = 0
