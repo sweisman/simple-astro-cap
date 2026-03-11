@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a minimal, keyboard-centric camera capture application for QHY and ZWO astronomy cameras, focused on simple terrestrial IR photography workflows.
+Build a minimal, keyboard-centric camera capture application for QHY, ZWO, Player One, and Touptek astronomy cameras, focused on simple terrestrial IR photography workflows.
 
 ## Phase 1: Core infrastructure (DONE)
 
@@ -44,7 +44,9 @@ PySide6 GUI with live view and sidebar controls.
 - [x] Portrait/landscape orientation toggle (frame transform in harness)
 - [x] Recording locks — only zoom, exposure, gain adjustable during recording
 - [x] ZWO ASI camera backend (`AsiCamera` via ctypes to `libASICamera2.so`)
-- [x] MultiCamera aggregator (discovers and delegates across QHY + ZWO backends)
+- [x] Player One camera backend (`PlayerOneCamera` via ctypes to `libPlayerOneCamera.so`)
+- [x] Touptek camera backend (`ToupcamCamera` via ctypes to `libtoupcam.so`)
+- [x] MultiCamera aggregator (discovers and delegates across QHY + ZWO + Player One + Touptek backends)
 - [x] Libs and firmware in project `lib/` and `firmware/` directories (sourced from AstroDMx install)
 
 ## Phase 4: Keyboard navigation (DONE)
@@ -109,7 +111,7 @@ Hardware auto-exposure/gain delegated to camera SDK when supported.
 
 ### What works
 
-- Multi-camera enumeration (QHY + ZWO backends), selection, and connection
+- Multi-camera enumeration (QHY + ZWO + Player One + Touptek backends), selection, and connection
 - Live frame display with dynamic zoom (fit-to-viewport through 100%, with scroll bars)
 - Keyboard-driven field navigation and value adjustment
 - Smart exposure stepping with automatic unit switching
@@ -132,6 +134,8 @@ Hardware auto-exposure/gain delegated to camera SDK when supported.
 
 - ZWO ASI camera (ASI678MM) — backend written, awaiting hardware test
 - ZWO auto-exposure/gain — wired up but untested
+- Player One camera — backend written, awaiting hardware test
+- Touptek camera — backend written, awaiting hardware test
 - Recording writes correct files (PNG, SER, and MKV)
 - Recording with time/frame limits and derived FPS throttling
 - 16-bit capture mode

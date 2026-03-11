@@ -24,6 +24,8 @@ class MultiCamera(CameraBase):
         # Try to load each backend; skip unavailable ones
         self._try_add_backend("QHY", self._make_qhy)
         self._try_add_backend("ASI", self._make_asi)
+        self._try_add_backend("PlayerOne", self._make_playerone)
+        self._try_add_backend("Touptek", self._make_touptek)
 
         if not self._backends:
             log.warning("No camera backends available")
@@ -37,6 +39,16 @@ class MultiCamera(CameraBase):
     def _make_asi() -> CameraBase:
         from .asi.backend import AsiCamera
         return AsiCamera()
+
+    @staticmethod
+    def _make_playerone() -> CameraBase:
+        from .playerone.backend import PlayerOneCamera
+        return PlayerOneCamera()
+
+    @staticmethod
+    def _make_touptek() -> CameraBase:
+        from .touptek.backend import ToupcamCamera
+        return ToupcamCamera()
 
     def _try_add_backend(self, name: str, factory) -> None:
         try:

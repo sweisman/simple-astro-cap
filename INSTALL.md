@@ -10,6 +10,8 @@
 
 - **QHY** cameras (tested: QHY5III585M)
 - **ZWO ASI** cameras (tested: ASI678MM)
+- **Player One** cameras
+- **Touptek** cameras
 
 ---
 
@@ -45,6 +47,8 @@ The application requires camera SDK shared libraries in `lib/`:
 |------|---------|
 | `libqhyccd.so` | QHY camera SDK |
 | `libASICamera2.so` | ZWO ASI camera SDK |
+| `libPlayerOneCamera.so` | Player One camera SDK |
+| `libtoupcam.so` | Touptek camera SDK |
 | `libgcc_s.so.1` | GCC runtime (required by QHY SDK) |
 | `libstdc++.so.6` | C++ stdlib (required by QHY SDK) |
 | `libusb-1.0.so.0` | USB library (specific version required by QHY SDK) |
@@ -115,7 +119,8 @@ If [AstroDMx Capture](https://www.astrodmx-capture.org.uk/) is installed at
 `/opt/AstroDMx-Capture/`, its udev rules already handle firmware loading and
 permissions for all supported QHY cameras. No additional setup is needed for QHY.
 
-You still need the ZWO ASI rules above if using ASI cameras.
+You still need the ZWO ASI rules above if using ASI cameras. Player One and Touptek
+cameras may also need udev rules — check the manufacturer's SDK documentation.
 
 ### Applying udev rules
 
@@ -184,7 +189,7 @@ python run.py --sim
 1. Plug in the camera and wait 2-3 seconds (firmware upload)
 2. Check that the device is accessible:
    ```bash
-   lsusb | grep -i -E "qhy|zwo|1618|03c3"
+   lsusb | grep -i -E "qhy|zwo|playerone|touptek|1618|03c3"
    ```
 3. Launch the application — the camera should appear in the dropdown
 
@@ -212,12 +217,12 @@ python run.py --sim
 
 ## Summary of Dependencies
 
-| Component | QHY Cameras | ZWO ASI Cameras | No Camera (Sim) |
-|-----------|-------------|-----------------|-----------------|
-| Python 3.11+ | Required | Required | Required |
-| PySide6, NumPy, Pillow | Required | Required | Required |
-| udev rules | Required | Required | Not needed |
-| fxload | Required | Not needed | Not needed |
-| Firmware files | Required | Not needed | Not needed |
-| ffmpeg | Optional (MKV) | Optional (MKV) | Optional (MKV) |
-| AstroDMx installed | Alternative to manual setup | No | No |
+| Component | QHY | ZWO ASI | Player One | Touptek | Simulator |
+|-----------|-----|---------|------------|---------|-----------|
+| Python 3.11+ | Required | Required | Required | Required | Required |
+| PySide6, NumPy, Pillow | Required | Required | Required | Required | Required |
+| udev rules | Required | Required | Check SDK docs | Check SDK docs | Not needed |
+| fxload | Required | Not needed | Not needed | Not needed | Not needed |
+| Firmware files | Required | Not needed | Not needed | Not needed | Not needed |
+| ffmpeg | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) |
+| AstroDMx installed | Alternative to manual setup | No | No | No | No |

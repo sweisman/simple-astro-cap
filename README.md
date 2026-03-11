@@ -1,6 +1,6 @@
 # Simple Astro Cap
 
-A simple, keyboard-centric camera capture application for QHY and ZWO astronomy cameras, built with Python and PySide6.
+A simple, keyboard-centric camera capture application for QHY, ZWO, Player One, and Touptek astronomy cameras, built with Python and PySide6.
 
 ## Why
 
@@ -8,7 +8,7 @@ Most astronomy camera applications are designed for full astrophotography setups
 
 ## What
 
-- **Multi-camera support** — QHY and ZWO ASI cameras via native SDK bindings
+- **Multi-camera support** — QHY, ZWO ASI, Player One, and Touptek cameras via native SDK bindings
 - **Live camera view** with dynamic zoom from fit-to-viewport through 100%, with scroll bars at higher zoom levels
 - **Keyboard-centric controls** — field navigation, exposure/gain/zoom adjustment, capture, and recording all driven by keyboard
 - **Smart exposure stepping** — automatic unit switching (µs ±10, ms ±1, s ±0.25) with seamless transitions at boundaries
@@ -36,10 +36,10 @@ Most astronomy camera applications are designed for full astrophotography setups
 ## Architecture
 
 ```
-MultiCamera (aggregates QHY + ZWO backends)
+MultiCamera (aggregates QHY + ZWO + Player One + Touptek backends)
   |
   v
-Camera (QHY SDK / ZWO ASI SDK via ctypes, or Simulator)
+Camera (QHY / ZWO ASI / Player One / Touptek SDK via ctypes, or Simulator)
   |
   v
 SimpleHarness (worker thread polls camera, dispatches frames)
@@ -53,7 +53,7 @@ SimpleHarness (worker thread polls camera, dispatches frames)
   +---> Recorder (PngRecorder, SerRecorder, or MkvRecorder)
 ```
 
-The camera layer is abstracted behind `CameraBase` (ABC). A `MultiCamera` aggregator discovers cameras from all available backends (QHY, ZWO ASI) and delegates to the appropriate one. The pipeline uses a simple worker thread that polls the camera, applies an optional frame transform (e.g., 90° rotation for portrait mode), and dispatches `Frame` objects to registered consumers. The `DisplayBridge` converts worker-thread callbacks into Qt signals so the GUI updates happen safely on the main thread.
+The camera layer is abstracted behind `CameraBase` (ABC). A `MultiCamera` aggregator discovers cameras from all available backends (QHY, ZWO ASI, Player One, Touptek) and delegates to the appropriate one. The pipeline uses a simple worker thread that polls the camera, applies an optional frame transform (e.g., 90° rotation for portrait mode), and dispatches `Frame` objects to registered consumers. The `DisplayBridge` converts worker-thread callbacks into Qt signals so the GUI updates happen safely on the main thread.
 
 ### Module layout
 
@@ -61,7 +61,7 @@ The camera layer is abstracted behind `CameraBase` (ABC). A `MultiCamera` aggreg
 src/simple_astro_cap/
 ├── camera/
 │   ├── abc.py              # CameraBase, Frame, Param, ROI, CameraInfo
-│   ├── multi.py            # MultiCamera aggregator (QHY + ZWO)
+│   ├── multi.py            # MultiCamera aggregator (QHY + ZWO + Player One + Touptek)
 │   ├── qhy/
 │   │   ├── sdk.py          # ctypes bindings to libqhyccd.so
 │   │   ├── constants.py    # QHY SDK control IDs and flags
@@ -70,6 +70,14 @@ src/simple_astro_cap/
 │   │   ├── sdk.py          # ctypes bindings to libASICamera2.so
 │   │   ├── constants.py    # ZWO ASI control types and enums
 │   │   └── backend.py      # AsiCamera implementation
+│   ├── playerone/
+│   │   ├── sdk.py          # ctypes bindings to libPlayerOneCamera.so
+│   │   ├── constants.py    # Player One config IDs and enums
+│   │   └── backend.py      # PlayerOneCamera implementation
+│   ├── touptek/
+│   │   ├── sdk.py          # ctypes bindings to libtoupcam.so
+│   │   ├── constants.py    # Touptek option IDs and enums
+│   │   └── backend.py      # ToupcamCamera implementation
 │   └── sim/
 │       └── backend.py      # SimCamera (test patterns)
 ├── pipeline/
