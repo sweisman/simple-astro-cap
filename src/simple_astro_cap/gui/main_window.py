@@ -247,7 +247,10 @@ class MainWindow(QMainWindow):
         # Ctrl combos
         if ctrl:
             if key == Qt.Key.Key_X:
-                self._camera_panel.auto_exposure_check.toggle()
+                if self._camera_panel.auto_exposure_check.isEnabled():
+                    self._camera_panel.auto_exposure_check.toggle()
+                else:
+                    self._camera_panel.soft_auto_exposure_check.toggle()
                 return
             if key == Qt.Key.Key_G:
                 self._camera_panel.auto_gain_check.toggle()
