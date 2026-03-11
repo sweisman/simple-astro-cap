@@ -13,7 +13,7 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Keyboard-centric controls** — field navigation, exposure/gain/zoom adjustment, capture, and recording all driven by keyboard
 - **Smart exposure stepping** — automatic unit switching (µs ±10, ms ±1, s ±0.25) with seamless transitions at boundaries
 - **Portrait/landscape orientation** — toggle frame rotation, affects both display and recordings
-- **PNG, SER, and MKV recording** — single-frame capture, multi-frame sequences, or lossless video
+- **PNG/TIFF, SER, and MKV recording** — single-frame snapshots (PNG or TIFF), multi-frame sequences, or lossless video
 - **SER file format** — standard free-astro.org format with timestamps and metadata, compatible with stacking software like AutoStakkert and RegiStax
 - **MKV video** — lossless FFV1 encoding via ffmpeg (8/16-bit mono, metadata embedded)
 - **Recording limits** — set time (seconds), frame count, or both; when both are set, FPS is derived automatically to fit frames into the time window
