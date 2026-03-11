@@ -37,9 +37,9 @@ This installs:
 
 ---
 
-## 2. Bundled Libraries
+## 2. Camera SDK Libraries
 
-The project bundles camera SDK shared libraries in `lib/`:
+The application requires camera SDK shared libraries in `lib/`:
 
 | File | Purpose |
 |------|---------|
@@ -49,10 +49,12 @@ The project bundles camera SDK shared libraries in `lib/`:
 | `libstdc++.so.6` | C++ stdlib (required by QHY SDK) |
 | `libusb-1.0.so.0` | USB library (specific version required by QHY SDK) |
 
-These are loaded automatically at runtime. No system-wide SDK installation is needed.
+These are sourced from an [AstroDMx Capture](https://www.astrodmx-capture.org.uk/)
+installation at `/opt/AstroDMx-Capture/lib/`. Copy or symlink them into the project's
+`lib/` directory. They are loaded automatically at runtime.
 
-**Important**: The QHY SDK requires its bundled `libusb-1.0.so.0`. The system libusb is a
-different version and will cause silent failures. The application pre-loads the bundled
+**Important**: The QHY SDK requires its own `libusb-1.0.so.0`. The system libusb is a
+different version and will cause silent failures. The application pre-loads the correct
 version automatically.
 
 ---
@@ -152,7 +154,8 @@ or `/sbin/fxload` instead of the project path.
 
 ## 5. QHY Firmware Files
 
-The project includes QHY firmware files in `firmware/qhy/`. These were sourced from
+QHY firmware files are needed in `firmware/qhy/`. These can be sourced from an
+AstroDMx Capture installation (`/opt/AstroDMx-Capture/firmware/qhy/`) or from
 the QHY SDK distribution.
 
 If you have a QHY camera model not listed in the udev rules, check `firmware/qhy/`
@@ -197,7 +200,7 @@ python run.py --sim
 - Run `ls -l /dev/bus/usb/XXX/YYY` to check device permissions
 
 **QHY SDK fails silently**:
-- The bundled `libusb-1.0.so.0` must be used (not the system version)
+- The QHY SDK's `libusb-1.0.so.0` must be used (not the system version)
 - This is handled automatically, but if you see connection failures, verify
   `lib/libusb-1.0.so.0` exists in the project directory
 
