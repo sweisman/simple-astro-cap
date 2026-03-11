@@ -84,6 +84,8 @@ Hardware auto-exposure/gain delegated to camera SDK when supported.
 - [x] PNG metadata: per-frame tEXt chunks
 - [x] SER metadata: per-frame timestamps (actual FPS derivable)
 - [x] Structured file layout: snapshots/, sessions/{date}/, monotonic sequence numbers
+- [x] Offset (black level) control with persistence
+- [x] Sensor temperature monitoring in status bar
 - [ ] USB traffic control (currently hardcoded to 30)
 - [x] Brightness/contrast display controls (keyboard B/C focus, left/right adjust, display-only)
 - [x] Clean up test scripts (test_init*.py) — deleted, no longer needed

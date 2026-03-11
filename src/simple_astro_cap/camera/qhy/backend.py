@@ -357,6 +357,17 @@ class QhyCamera(CameraBase):
     def get_auto_gain(self) -> bool:
         return self.get_auto_exposure()
 
+    def get_sensor_temperature(self) -> float | None:
+        if not self._connected:
+            return None
+        sdk = self._get_sdk()
+        if not sdk.is_control_available(self._handle, ControlId.CURTEMP):
+            return None
+        try:
+            return sdk.get_param(self._handle, ControlId.CURTEMP)
+        except Exception:
+            return None
+
     def set_bin_mode(self, bin_factor: int) -> None:
         """Set binning mode. Caller must stop live streaming first.
 

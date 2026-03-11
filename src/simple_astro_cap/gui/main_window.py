@@ -196,9 +196,11 @@ class MainWindow(QMainWindow):
         self._status_res = QLabel("")
         self._status_cam = QLabel("Disconnected")
         self._status_rec = QLabel("")
+        self._status_temp = QLabel("")
         self._status_bar.addWidget(self._status_cam)
         self._status_bar.addWidget(self._status_res)
         self._status_bar.addPermanentWidget(self._status_rec)
+        self._status_bar.addPermanentWidget(self._status_temp)
         self._status_bar.addPermanentWidget(self._status_fps)
 
     def _setup_shortcuts(self) -> None:
@@ -294,6 +296,7 @@ class MainWindow(QMainWindow):
         self._camera_panel.orientation_changed.connect(self._on_orientation_changed)
         self._camera_panel.exposure_changed.connect(self._on_exposure_changed)
         self._camera_panel.gain_changed.connect(self._on_gain_changed)
+        self._camera_panel.offset_changed.connect(self._on_offset_changed)
         self._camera_panel.auto_exposure_toggled.connect(self._on_auto_exposure_toggled)
         self._camera_panel.soft_auto_exposure_toggled.connect(self._on_soft_auto_exposure_toggled)
         self._camera_panel.auto_gain_toggled.connect(self._on_auto_gain_toggled)
@@ -376,10 +379,19 @@ class MainWindow(QMainWindow):
         self._camera_panel.set_sensor_size(info.sensor_width, info.sensor_height)
 
         # Set param ranges
-        for param in (Param.EXPOSURE, Param.GAIN):
+        for param in (Param.EXPOSURE, Param.GAIN, Param.OFFSET):
             prange = self._camera.get_param_range(param)
             if prange:
                 self._camera_panel.set_param_range(param, prange)
+
+        # Apply saved offset to camera
+        offset_range = self._camera.get_param_range(Param.OFFSET)
+        if offset_range is not None:
+            offset_val = self._camera_panel.offset_spin.value()
+            try:
+                self._camera.set_param(Param.OFFSET, offset_val)
+            except Exception:
+                pass
 
         # Enable auto checkboxes based on camera capabilities
         self._camera_panel.set_auto_capabilities(
@@ -422,6 +434,7 @@ class MainWindow(QMainWindow):
         self._display_group.setEnabled(False)
         self._status_cam.setText("Disconnected")
         self._status_res.setText("")
+        self._status_temp.setText("")
 
     # --- Display ---
 
@@ -531,6 +544,15 @@ class MainWindow(QMainWindow):
         self._fps_display = self._fps_count
         self._fps_count = 0
         self._status_fps.setText(f"{self._fps_display:.0f} fps")
+        # Update sensor temperature
+        if self._camera.is_connected():
+            temp = self._camera.get_sensor_temperature()
+            if temp is not None:
+                self._status_temp.setText(f"{temp:.1f}°C")
+            else:
+                self._status_temp.setText("")
+        else:
+            self._status_temp.setText("")
         if self._recorder is not None:
             if self._recorder.is_recording():
                 n = self._recorder.frames_written()
@@ -575,6 +597,10 @@ class MainWindow(QMainWindow):
     def _on_gain_changed(self, value: float) -> None:
         if self._camera.is_connected():
             self._camera.set_gain(value)
+
+    def _on_offset_changed(self, value: float) -> None:
+        if self._camera.is_connected():
+            self._camera.set_param(Param.OFFSET, value)
 
     def _on_auto_exposure_toggled(self, enabled: bool) -> None:
         if self._camera.is_connected() and self._camera.supports_auto_exposure():
@@ -947,6 +973,10 @@ class MainWindow(QMainWindow):
         self._camera_panel.gain_spin.setValue(s.gain)
         self._camera_panel.gain_spin.blockSignals(False)
 
+        self._camera_panel.offset_spin.blockSignals(True)
+        self._camera_panel.offset_spin.setValue(s.offset)
+        self._camera_panel.offset_spin.blockSignals(False)
+
         # Bit depth
         idx = self._camera_panel.bit_depth_combo.findText(str(s.bit_depth))
         if idx >= 0:
@@ -971,6 +1001,7 @@ class MainWindow(QMainWindow):
         return AppSettings(
             exposure_us=self._camera_panel.get_exposure_us(),
             gain=self._camera_panel.gain_spin.value(),
+            offset=self._camera_panel.offset_spin.value(),
             bit_depth=self._camera_panel.selected_bit_depth,
             output_dir=self._recording_panel.output_dir_edit.text(),
             format_name=self._recording_panel.format_name,

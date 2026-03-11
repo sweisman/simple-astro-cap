@@ -17,6 +17,7 @@ _SETTINGS_FILE = _SETTINGS_DIR / "settings.json"
 class AppSettings:
     exposure_us: float = 5000.0
     gain: float = 50.0
+    offset: float = 0.0
     bit_depth: int = 8
     output_dir: str = "~/astro-captures"
     format_name: str = "SER"

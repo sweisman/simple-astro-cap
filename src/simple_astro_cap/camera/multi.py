@@ -136,6 +136,9 @@ class MultiCamera(CameraBase):
     def get_auto_gain(self) -> bool:
         return self._active.get_auto_gain() if self._active else False
 
+    def get_sensor_temperature(self) -> float | None:
+        return self._active.get_sensor_temperature() if self._active else None
+
     def set_exposure(self, microseconds: float) -> None:
         self._active.set_exposure(microseconds)
 

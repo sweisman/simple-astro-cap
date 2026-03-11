@@ -50,6 +50,7 @@ class CameraPanel(QGroupBox):
     soft_auto_exposure_toggled = Signal(bool)
     gain_changed = Signal(float)
     auto_gain_toggled = Signal(bool)
+    offset_changed = Signal(float)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Camera", parent)
@@ -186,6 +187,15 @@ class CameraPanel(QGroupBox):
         self.auto_gain_check.setToolTip("Not supported by this camera")
         add_field("auto_gain", "", self.auto_gain_check)
 
+        self.offset_spin = QDoubleSpinBox()
+        self.offset_spin.setDecimals(0)
+        self.offset_spin.setRange(0, 255)
+        self.offset_spin.setValue(10)
+        self.offset_spin.setKeyboardTracking(False)
+        self.offset_spin.setEnabled(False)
+        self.offset_spin.setToolTip("ADC offset (black level)")
+        add_field("offset", "Offset:", self.offset_spin)
+
         # Disable all labels except camera/status initially
         self._set_preconnect_labels_enabled(False)
         self._set_postconnect_labels_enabled(False)
@@ -226,6 +236,7 @@ class CameraPanel(QGroupBox):
         self.soft_auto_exposure_check.toggled.connect(self._on_soft_auto_exposure_toggled)
         self.gain_spin.valueChanged.connect(lambda v: self.gain_changed.emit(v))
         self.auto_gain_check.toggled.connect(self._on_auto_gain_toggled)
+        self.offset_spin.valueChanged.connect(lambda v: self.offset_changed.emit(v))
 
     # --- Keyboard navigation ---
 
@@ -573,6 +584,7 @@ class CameraPanel(QGroupBox):
         self.exposure_spin.setEnabled(connected)
         self.exposure_unit_combo.setEnabled(connected)
         self.gain_spin.setEnabled(connected)
+        self.offset_spin.setEnabled(connected)
         self.soft_auto_exposure_check.setEnabled(connected)
         self._set_postconnect_labels_enabled(connected)
         if not connected:
@@ -615,6 +627,11 @@ class CameraPanel(QGroupBox):
             self.gain_spin.setRange(prange.min_val, prange.max_val)
             self.gain_spin.setSingleStep(prange.step)
             self.gain_spin.blockSignals(False)
+        elif param == Param.OFFSET:
+            self.offset_spin.blockSignals(True)
+            self.offset_spin.setRange(prange.min_val, prange.max_val)
+            self.offset_spin.setSingleStep(prange.step)
+            self.offset_spin.blockSignals(False)
         elif param == Param.EXPOSURE:
             # Range is managed by unit-switching logic in _set_exposure_unit.
             # Camera SDK enforces actual limits independently.

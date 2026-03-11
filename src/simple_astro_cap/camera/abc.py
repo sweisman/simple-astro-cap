@@ -167,6 +167,12 @@ class CameraBase(ABC):
         """Return True if hardware auto-gain is currently enabled."""
         return False
 
+    # --- Sensor temperature ---
+
+    def get_sensor_temperature(self) -> float | None:
+        """Return sensor temperature in degrees Celsius, or None if unavailable."""
+        return None
+
     # --- Single capture ---
 
     @abstractmethod

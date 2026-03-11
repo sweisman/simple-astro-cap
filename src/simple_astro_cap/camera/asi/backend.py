@@ -303,6 +303,16 @@ class AsiCamera(CameraBase):
                 return bool(caps.IsAutoSupported)
         return False
 
+    def get_sensor_temperature(self) -> float | None:
+        if not self._connected or self._camera_id is None:
+            return None
+        try:
+            val, _ = self._get_sdk().get_control_value(
+                self._camera_id, ControlType.TEMPERATURE)
+            return val / 10.0  # ASI returns temperature * 10
+        except Exception:
+            return None
+
     def set_bin_mode(self, bin_factor: int) -> None:
         """Set binning. Caller must stop live streaming first."""
         self._require_connected()

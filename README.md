@@ -20,13 +20,16 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Session metadata** — each recording session writes a `.txt` summary (start/end time, frames, FPS, exposure, gain, etc.)
 - **8-bit and 16-bit capture** — selectable before connecting
 - **Binning support** — 1x1 (default), 2x2 depending on camera capabilities, with safe stop/restart cycle
+- **Offset (black level) control** — ADC offset persisted across sessions; range set per camera
+- **Sensor temperature** — live readout in the status bar (when supported by camera)
 - **Hardware auto-exposure/gain** — enabled when the camera supports it (QHY and ZWO ASI); greyed out otherwise
+- **Software auto-exposure** — always available; adjusts exposure based on frame brightness with proportional control; mutually exclusive with hardware auto
 - **Brightness/contrast controls** — display-only adjustments (keyboard B/C to focus, left/right to adjust)
 - **Histogram** — toggleable live histogram in sidebar
 - **Recording locks** — only zoom, exposure, and gain are adjustable during recording; all other settings locked
 - **Adjustable sidebar** — drag to resize, width persisted across sessions
 - **Camera hotplug** — manual refresh button to detect newly connected cameras
-- **Viewport downsampling** — automatic decimation in fit-to-viewport mode for low-power devices
+- **Viewport downsampling** — automatic decimation at all sub-100% zoom levels for efficient display
 - **Simulator backend** — test the GUI without a physical camera (`--sim` flag)
 - **Mono only** for now
 
