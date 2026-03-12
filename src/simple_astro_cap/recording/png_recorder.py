@@ -40,6 +40,7 @@ class PngRecorder(RecorderBase):
         self._camera_name = str(kwargs.get("camera", ""))
         self._telescope = str(kwargs.get("telescope", ""))
         self._start_sequence = int(kwargs.get("start_sequence", 0))
+        self._bayer_pattern = str(kwargs.get("bayer_pattern", ""))
 
         path.mkdir(parents=True, exist_ok=True)
         self._output_dir = path
@@ -75,6 +76,8 @@ class PngRecorder(RecorderBase):
         meta.add_text("Software", "Simple Astro Cap")
         meta.add_text("Sequence", str(seq))
         meta.add_text("BitDepth", str(frame.bit_depth))
+        if self._bayer_pattern:
+            meta.add_text("BayerPattern", self._bayer_pattern)
         if frame.timestamp_ns:
             meta.add_text("TimestampNs", str(frame.timestamp_ns))
         if self._target_fps > 0:

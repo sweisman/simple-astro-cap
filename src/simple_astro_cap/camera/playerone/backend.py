@@ -442,8 +442,15 @@ class PlayerOneCamera(CameraBase):
                 return prop
         raise RuntimeError(f"Camera ID {poa_id} not found")
 
+    # POA bayerPattern: 0=RG, 1=BG, 2=GR, 3=GB (same as ASI)
+    _POA_BAYER_MAP = {0: "RGGB", 1: "BGGR", 2: "GRBG", 3: "GBRG"}
+
     def _make_info(self, camera_id: str, prop) -> CameraInfo:
         name = prop.cameraModelName.decode("ascii", errors="replace").strip()
+        is_color = bool(prop.isColorCamera)
+        bayer = ""
+        if is_color:
+            bayer = self._POA_BAYER_MAP.get(prop.bayerPattern, "RGGB")
         return CameraInfo(
             camera_id=camera_id,
             model=name,
@@ -452,5 +459,6 @@ class PlayerOneCamera(CameraBase):
             pixel_width_um=prop.pixelSize,
             pixel_height_um=prop.pixelSize,
             max_bit_depth=prop.bitDepth,
-            is_color=bool(prop.isColorCamera),
+            is_color=is_color,
+            bayer_pattern=bayer,
         )

@@ -48,6 +48,7 @@ class ControlId(IntEnum):
     DDR = 37
     HUMIDITY = 38
     PRESSURE = 39
+    CAM_IS_COLOR = 46
 
     # Auto-exposure (SDK-internal 3A system manages exposure + gain together)
     CAM_AUTOEXPOSURE = 88  # 0x58: SetQHYCCDParam → SetAutoExposure

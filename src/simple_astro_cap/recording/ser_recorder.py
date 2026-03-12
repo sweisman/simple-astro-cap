@@ -25,6 +25,14 @@ log = logging.getLogger(__name__)
 _FILE_ID = b"LUCAM-RECORDER"
 _COLOR_MONO = 0
 
+# SER ColorID values for Bayer patterns
+_BAYER_COLOR_ID = {
+    "RGGB": 8,
+    "BGGR": 16,
+    "GRBG": 9,
+    "GBRG": 17,
+}
+
 # Windows FILETIME epoch offset: 100-nanosecond intervals from 1601-01-01 to 1970-01-01
 _EPOCH_OFFSET = 116444736000000000
 
@@ -62,6 +70,7 @@ class SerRecorder(RecorderBase):
         bit_depth = int(kwargs.get("bit_depth", 8))
         width = int(kwargs.get("width", 0))
         height = int(kwargs.get("height", 0))
+        bayer_pattern = str(kwargs.get("bayer_pattern", ""))
         max_frames = kwargs.get("max_frames")
         max_duration = kwargs.get("max_duration", 0.0)
         target_fps = kwargs.get("target_fps", 0.0)
@@ -79,10 +88,12 @@ class SerRecorder(RecorderBase):
         self._file = open(path, "wb")
 
         now = _now_filetime()
+        color_id = _BAYER_COLOR_ID.get(bayer_pattern, _COLOR_MONO)
         header = self._pack_header(
             width=width,
             height=height,
             bit_depth=bit_depth,
+            color_id=color_id,
             frame_count=0,  # patched on stop
             datetime_local=now,
             datetime_utc=now,
@@ -122,6 +133,7 @@ class SerRecorder(RecorderBase):
         width: int,
         height: int,
         bit_depth: int,
+        color_id: int,
         frame_count: int,
         datetime_local: int,
         datetime_utc: int,
@@ -132,8 +144,8 @@ class SerRecorder(RecorderBase):
         header[0:14] = _FILE_ID
         # LuID (4 bytes) = 0
         struct.pack_into("<I", header, 14, 0)
-        # ColorID (4 bytes) = MONO
-        struct.pack_into("<I", header, 18, _COLOR_MONO)
+        # ColorID (4 bytes) — 0=MONO, 8=RGGB, 9=GRBG, 16=BGGR, 17=GBRG
+        struct.pack_into("<I", header, 18, color_id)
         # LittleEndian (4 bytes) — 0 means little-endian in practice
         struct.pack_into("<I", header, 22, 0)
         # ImageWidth

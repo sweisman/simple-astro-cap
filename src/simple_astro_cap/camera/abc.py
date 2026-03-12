@@ -34,6 +34,7 @@ class CameraInfo:
     pixel_height_um: float
     max_bit_depth: int
     is_color: bool
+    bayer_pattern: str = ""  # "" for mono; "RGGB", "BGGR", "GRBG", "GBRG" for color
 
 
 @dataclass(frozen=True)

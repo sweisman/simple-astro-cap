@@ -729,6 +729,7 @@ class MainWindow(QMainWindow):
         if not self._camera.is_connected() or self._last_frame is None:
             return
         frame = self._last_frame
+        info = self._camera.get_info()
         snap_dir = self._recording_panel.output_dir / "snapshots"
         snap_dir.mkdir(parents=True, exist_ok=True)
 
@@ -743,12 +744,21 @@ class MainWindow(QMainWindow):
 
         if snap_fmt == "TIFF":
             filename = f"{timestamp}-{seq:06d}.tiff"
-            img.save(snap_dir / filename, format="TIFF")
+            # TIFF tag 270 = ImageDescription
+            desc_parts = [f"Software=Simple Astro Cap", f"BitDepth={frame.bit_depth}"]
+            if info.bayer_pattern:
+                desc_parts.append(f"BayerPattern={info.bayer_pattern}")
+            from PIL.TiffImagePlugin import ImageFileDirectory_v2
+            ifd = ImageFileDirectory_v2()
+            ifd[270] = "; ".join(desc_parts)
+            img.save(snap_dir / filename, format="TIFF", tiffinfo=ifd)
         else:
             filename = f"{timestamp}-{seq:06d}.png"
             meta = PngInfo()
             meta.add_text("Software", "Simple Astro Cap")
             meta.add_text("BitDepth", str(frame.bit_depth))
+            if info.bayer_pattern:
+                meta.add_text("BayerPattern", info.bayer_pattern)
             if frame.timestamp_ns:
                 meta.add_text("TimestampNs", str(frame.timestamp_ns))
             img.save(snap_dir / filename, pnginfo=meta)
@@ -797,6 +807,7 @@ class MainWindow(QMainWindow):
             bit_depth=bit_depth,
             camera=info.model,
             telescope=self._lens_edit.text(),
+            bayer_pattern=info.bayer_pattern,
             max_frames=max_frames,
             max_duration=max_time,
             target_fps=target_fps,
@@ -841,6 +852,7 @@ class MainWindow(QMainWindow):
             height=frame_h,
             camera=info.model,
             telescope=self._lens_edit.text(),
+            bayer_pattern=info.bayer_pattern,
             target_fps=target_fps,
             max_time=max_time,
             max_frames=max_frames,
@@ -944,6 +956,8 @@ class MainWindow(QMainWindow):
             f"camera: {meta['camera']}",
             f"telescope: {meta['telescope']}",
         ]
+        if meta.get("bayer_pattern"):
+            lines.append(f"bayer_pattern: {meta['bayer_pattern']}")
         try:
             txt_path.write_text("\n".join(lines) + "\n")
         except Exception as e:

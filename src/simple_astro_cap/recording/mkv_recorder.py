@@ -40,6 +40,7 @@ class MkvRecorder(RecorderBase):
         target_fps = kwargs.get("target_fps", 0.0)
         camera = str(kwargs.get("camera", ""))
         telescope = str(kwargs.get("telescope", ""))
+        bayer_pattern = str(kwargs.get("bayer_pattern", ""))
 
         if not ffmpeg_available():
             raise RuntimeError("ffmpeg not found on PATH")
@@ -76,6 +77,8 @@ class MkvRecorder(RecorderBase):
             cmd += ["-metadata", f"artist={camera}"]
         if telescope:
             cmd += ["-metadata", f"comment={telescope}"]
+        if bayer_pattern:
+            cmd += ["-metadata", f"bayer_pattern={bayer_pattern}"]
 
         cmd.append(str(path))
 

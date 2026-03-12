@@ -417,6 +417,7 @@ class ToupcamCamera(CameraBase):
                 name = dev.displayname.decode("ascii", errors="replace").strip()
                 break
 
+        is_color = not is_mono
         return CameraInfo(
             camera_id=camera_id,
             model=name,
@@ -425,5 +426,6 @@ class ToupcamCamera(CameraBase):
             pixel_width_um=px,
             pixel_height_um=py,
             max_bit_depth=max_bits,
-            is_color=not is_mono,
+            is_color=is_color,
+            bayer_pattern="RGGB" if is_color else "",
         )

@@ -4,9 +4,9 @@ A simple, keyboard-centric camera capture application for QHY, ZWO, Player One, 
 
 ## Why
 
-Most astronomy camera applications are designed for full astrophotography setups — filter wheels, automated tracking mounts, camera cooling, and complex session planning. For simple terrestrial infrared photography, all that gets in the way. Simple Astro Cap strips things down to the essentials: connect a camera, see the live feed, adjust exposure and gain, and record frames to PNG, SER, or lossless MKV files. It's designed for use with a QHY5III585M and ASI678MM, though the architecture supports other QHY and ZWO cameras.
+Most astronomy camera applications are designed for full astrophotography setups — filter wheels, automated tracking mounts, camera cooling, and complex session planning. For simple terrestrial infrared photography, all that gets in the way. Simple Astro Cap strips things down to the essentials: connect a camera, see the live feed, adjust exposure and gain, and record frames to PNG, SER, or lossless MKV files. It's designed for use with a QHY5III585M and ASI678MM, though the architecture supports other QHY, ZWO, Player One, and Touptek cameras.
 
-## What
+## Features
 
 - **Multi-camera support** — QHY, ZWO ASI, Player One, and Touptek cameras via native SDK bindings
 - **Live camera view** with dynamic zoom from fit-to-viewport through 100%, with scroll bars at higher zoom levels
@@ -22,84 +22,15 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Binning support** — 1x1 (default), 2x2 depending on camera capabilities, with safe stop/restart cycle
 - **Offset (black level) control** — ADC offset persisted across sessions; range set per camera
 - **Sensor temperature** — live readout in the status bar (when supported by camera)
-- **Hardware auto-exposure/gain** — enabled when the camera supports it (QHY and ZWO ASI); greyed out otherwise
+- **Hardware auto-exposure/gain** — enabled when the camera supports it; greyed out otherwise
 - **Software auto-exposure** — always available; adjusts exposure based on frame brightness with proportional control; mutually exclusive with hardware auto
 - **Brightness/contrast controls** — display-only adjustments (keyboard B/C to focus, left/right to adjust)
 - **Histogram** — toggleable live histogram in sidebar
 - **Recording locks** — only zoom, exposure, and gain are adjustable during recording; all other settings locked
-- **Adjustable sidebar** — drag to resize, width persisted across sessions
-- **Camera hotplug** — manual refresh button to detect newly connected cameras
+- **Frame drop detection** — sequence gap analysis reported in session `.txt` and status bar
+- **Raw Bayer metadata** — color cameras record raw (un-debayered) data with correct Bayer pattern metadata in SER headers, PNG/TIFF tags, MKV metadata, and session summaries; stacking software can debayer after the fact
 - **Viewport downsampling** — automatic decimation at all sub-100% zoom levels for efficient display
 - **Simulator backend** — test the GUI without a physical camera (`--sim` flag)
-- **Mono only** for now
-
-## Architecture
-
-```
-MultiCamera (aggregates QHY + ZWO + Player One + Touptek backends)
-  |
-  v
-Camera (QHY / ZWO ASI / Player One / Touptek SDK via ctypes, or Simulator)
-  |
-  v
-SimpleHarness (worker thread polls camera, dispatches frames)
-  |  frame_transform (optional rotation for portrait mode)
-  |
-  +---> DisplayBridge (QObject, emits Qt signal for thread-safe GUI update)
-  |       |
-  |       v
-  |     LiveViewWidget (QScrollArea + inner image widget, dynamic zoom)
-  |
-  +---> Recorder (PngRecorder, SerRecorder, or MkvRecorder)
-```
-
-The camera layer is abstracted behind `CameraBase` (ABC). A `MultiCamera` aggregator discovers cameras from all available backends (QHY, ZWO ASI, Player One, Touptek) and delegates to the appropriate one. The pipeline uses a simple worker thread that polls the camera, applies an optional frame transform (e.g., 90° rotation for portrait mode), and dispatches `Frame` objects to registered consumers. The `DisplayBridge` converts worker-thread callbacks into Qt signals so the GUI updates happen safely on the main thread.
-
-### Module layout
-
-```
-src/simple_astro_cap/
-├── camera/
-│   ├── abc.py              # CameraBase, Frame, Param, ROI, CameraInfo
-│   ├── multi.py            # MultiCamera aggregator (QHY + ZWO + Player One + Touptek)
-│   ├── qhy/
-│   │   ├── sdk.py          # ctypes bindings to libqhyccd.so
-│   │   ├── constants.py    # QHY SDK control IDs and flags
-│   │   └── backend.py      # QhyCamera implementation
-│   ├── asi/
-│   │   ├── sdk.py          # ctypes bindings to libASICamera2.so
-│   │   ├── constants.py    # ZWO ASI control types and enums
-│   │   └── backend.py      # AsiCamera implementation
-│   ├── playerone/
-│   │   ├── sdk.py          # ctypes bindings to libPlayerOneCamera.so
-│   │   ├── constants.py    # Player One config IDs and enums
-│   │   └── backend.py      # PlayerOneCamera implementation
-│   ├── touptek/
-│   │   ├── sdk.py          # ctypes bindings to libtoupcam.so
-│   │   ├── constants.py    # Touptek option IDs and enums
-│   │   └── backend.py      # ToupcamCamera implementation
-│   └── sim/
-│       └── backend.py      # SimCamera (test patterns)
-├── pipeline/
-│   ├── abc.py              # FrameConsumer, FrameProducer protocols
-│   └── simple.py           # SimpleHarness (worker thread + frame transform)
-├── recording/
-│   ├── abc.py              # RecorderBase (FPS gating, frame/time limits)
-│   ├── png_recorder.py     # PNG sequence recorder (tEXt metadata + summary JSON)
-│   ├── ser_recorder.py     # SER video recorder (per-frame timestamps)
-│   └── mkv_recorder.py     # MKV lossless video (FFV1 via ffmpeg)
-├── gui/
-│   ├── main_window.py      # MainWindow (orchestrates everything)
-│   ├── display_bridge.py   # Worker thread -> Qt signal bridge
-│   ├── live_view.py        # LiveViewWidget (QScrollArea + dynamic zoom)
-│   ├── camera_panel.py     # Camera settings sidebar + keyboard navigation
-│   ├── recording_panel.py  # Recording settings sidebar
-│   ├── histogram.py        # Live histogram widget
-│   └── shortcuts.py        # Keyboard shortcut definitions
-├── util/
-│   └── units.py            # Exposure unit conversion (us/ms/s)
-└── app.py                  # Application entry point
-```
 
 ## How to run
 
@@ -144,6 +75,96 @@ python run.py --sim
 
 The focused field's label is bolded for visibility. Exposure stepping is smart: ±10 µs in microsecond range, ±1 ms in millisecond range, ±0.25 s in second range, with automatic unit switching at boundaries.
 
+## Architecture
+
+```
+MultiCamera (aggregates QHY + ZWO + Player One + Touptek backends)
+  |
+  v
+Camera (QHY / ZWO ASI / Player One / Touptek SDK via ctypes, or Simulator)
+  |
+  v
+SimpleHarness (worker thread polls camera, dispatches frames)
+  |  frame_transform (optional rotation for portrait mode)
+  |
+  +---> DisplayBridge (QObject, emits Qt signal for thread-safe GUI update)
+  |       |
+  |       v
+  |     LiveViewWidget (QScrollArea + inner image widget, dynamic zoom)
+  |
+  +---> Recorder (PngRecorder, SerRecorder, or MkvRecorder)
+```
+
+The camera layer is abstracted behind `CameraBase` (ABC). A `MultiCamera` aggregator discovers cameras from all available backends and delegates to the appropriate one. The pipeline uses a simple worker thread that polls the camera, applies an optional frame transform (e.g., 90° rotation for portrait mode), and dispatches `Frame` objects to registered consumers. The `DisplayBridge` converts worker-thread callbacks into Qt signals so the GUI updates happen safely on the main thread.
+
+### Module layout
+
+```
+src/simple_astro_cap/
+├── camera/
+│   ├── abc.py              # CameraBase, Frame, Param, ROI, CameraInfo
+│   ├── multi.py            # MultiCamera aggregator
+│   ├── qhy/                # QHY backend (ctypes to libqhyccd.so)
+│   ├── asi/                # ZWO ASI backend (ctypes to libASICamera2.so)
+│   ├── playerone/          # Player One backend (ctypes to libPlayerOneCamera.so)
+│   ├── touptek/            # Touptek backend (ctypes to libtoupcam.so)
+│   └── sim/                # SimCamera (test patterns)
+├── pipeline/
+│   ├── abc.py              # FrameConsumer, FrameProducer protocols
+│   └── simple.py           # SimpleHarness (worker thread + frame transform)
+├── recording/
+│   ├── abc.py              # RecorderBase (FPS gating, frame/time limits)
+│   ├── png_recorder.py     # PNG sequence recorder (tEXt metadata)
+│   ├── ser_recorder.py     # SER video recorder (per-frame timestamps)
+│   └── mkv_recorder.py     # MKV lossless video (FFV1 via ffmpeg)
+├── gui/
+│   ├── main_window.py      # MainWindow (orchestrates everything)
+│   ├── display_bridge.py   # Worker thread -> Qt signal bridge
+│   ├── live_view.py        # LiveViewWidget (QScrollArea + dynamic zoom)
+│   ├── camera_panel.py     # Camera settings sidebar + keyboard navigation
+│   ├── recording_panel.py  # Recording settings sidebar
+│   ├── histogram.py        # Live histogram widget
+│   └── shortcuts.py        # Keyboard shortcut definitions
+├── util/
+│   └── units.py            # Exposure unit conversion (us/ms/s)
+└── app.py                  # Application entry point
+```
+
+### Recording file layout
+
+```
+{output_dir}/
+  snapshots/
+    YYYY-MM-DD-HH:MM:SS-NNNNNN.png
+  sessions/
+    YYYY-MM-DD/
+      YYYY-MM-DD-HH:MM:SS-NNNNNN.ser   (+ .txt)
+      YYYY-MM-DD-HH:MM:SS-NNNNNN.mkv   (+ .txt)
+      YYYY-MM-DD-HH:MM:SS-NNNNNN/      (PNG session dir)
+        YYYY-MM-DD-HH:MM:SS-MMMMMM-NNNNNN.png  (MMMMMM=start seq)
+        session.txt
+```
+
+### Settings
+
+JSON at `~/.config/simple-astro-cap/settings.json`. Camera is never persisted — always starts disconnected.
+
+## Code conventions
+
+- Python 3.11+, PySide6 for GUI, no OpenCV dependency
+- `from __future__ import annotations` in every module
+- Exposure values always in microseconds internally; display conversion in `util/units.py`
+- Camera backends use ctypes to native SDK shared libraries in `lib/` (sourced from AstroDMx install)
+- No test suite — verify changes with `python -m py_compile` on all modified files
+
+### Key patterns
+
+- **Camera lifecycle**: Never open+close a QHY camera handle during enumeration — it corrupts USB state. The `pre_open` pattern keeps the handle alive for reuse on `connect()`.
+- **Signal blocking**: Always use `blockSignals(True/False)` when programmatically setting Qt widget values to prevent recursive signal chains.
+- **Thread safety**: Camera polling runs on a worker thread (`SimpleHarness`). GUI updates must go through `DisplayBridge` (QObject signal). Recorders receive frames on the worker thread.
+- **Recording gating**: `RecorderBase.on_frame()` handles FPS throttling, max-frames, and max-duration auto-stop. Subclasses only implement `_write_frame()`.
+- **Sequence numbers**: `snap_sequence` and `session_sequence` in settings are monotonically increasing and never reset.
+
 ## QHY SDK notes
 
 The QHY SDK has several quirks that required workarounds:
@@ -154,6 +175,44 @@ The QHY SDK has several quirks that required workarounds:
 - **Default parameters required**: The camera won't produce frames until exposure, gain, and USB traffic are explicitly set after `InitQHYCCD`.
 - **SetQHYCCDReadMode**: Not called — AstroDMx doesn't call it and the camera works without it.
 - **Auto-exposure**: Control ID 88 (0x58) via `SetQHYCCDParam` enables the SDK's internal 3A auto-exposure system, which manages both exposure and gain together. `QHYCCD_SetAutoEXPmessureValue` sets the target brightness. These signatures were reverse-engineered from the shared library as they're undocumented.
+- **USB traffic**: Currently hardcoded to 30; not yet exposed as a user control.
+
+## Testing needed
+
+- ZWO ASI camera (ASI678MM) — backend written, awaiting hardware test
+- Player One camera — backend written, awaiting hardware test
+- Touptek camera — backend written, awaiting hardware test
+- 16-bit capture mode
+- SER file compatibility with stacking software
+
+## TODO
+
+- [ ] USB traffic control (currently hardcoded to 30)
+- [ ] ROI display overlay on live view
+- [ ] Crosshair overlay for focusing
+- [ ] High-performance ring buffer pipeline — decouples camera polling from disk I/O via a pre-allocated circular buffer on separate threads, absorbing brief I/O stalls without dropping frames. Unlikely to be needed for most astro cameras on SSD storage at 8-bit; current simple pipeline handles full-resolution 40+ FPS to SER without issues. Consider only if frame drop detection reports losses in practice.
+- [ ] Color camera display support (debayering) — raw Bayer recording already works
+
+### Adding color camera support
+
+Color cameras already work — they record raw Bayer data with correct metadata. What's missing is debayered display and color-aware recording. Two approaches:
+
+**Hardware debayer (SDK-side)**: Request RGB24 format from the SDK instead of RAW8/RAW16. The SDK debayers internally and returns 3-channel data. Changes needed:
+- Backends: request RGB24 image format for color cameras
+- `Frame.data`: allow 3D arrays `(h, w, 3)` in addition to 2D
+- `live_view.py`: use `QImage.Format_RGB888` instead of `Format_Grayscale8`
+- Recorders: PNG mode `"RGB"`, SER ColorID `100` (RGB), MKV pix_fmt `"rgb24"`
+- Histogram: compute per-channel or luminance
+- Decimation/rotation: slice `data[::step, ::step, :]` and `np.rot90(data, axes=(0,1))`
+- Software auto-exposure: compute brightness from luminance
+
+**Software debayer (raw Bayer kept internally)**: Keep requesting RAW8/RAW16 and debayer in Python for display only. Recording stays raw Bayer (smaller files, no quality loss). Changes needed:
+- All of the above for display path only
+- Add a debayer step in `DisplayBridge` or `_on_new_frame` using scipy/numpy Bayer interpolation
+- Recording path stays unchanged (already handles raw Bayer with correct metadata)
+- New dependency: `scipy.ndimage` or a small Bayer interpolation routine
+
+The software debayer approach is better for recording quality (no SDK color processing baked in), while hardware debayer is simpler and faster for display. A hybrid — raw Bayer for recording, SDK RGB for display — would require the SDK to deliver both formats simultaneously, which most SDKs don't support. The practical choice is software debayer for display with raw Bayer recording.
 
 ## License
 

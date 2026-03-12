@@ -136,6 +136,7 @@ class QhyCamera(CameraBase):
 
         _, _, iw, ih, pw, ph, bpp = sdk.get_chip_info(self._pre_open_handle)
         model = camera_id.split("-")[0] if "-" in camera_id else camera_id
+        is_color = sdk.is_control_available(self._pre_open_handle, ControlId.CAM_IS_COLOR)
         self._pre_open_info = CameraInfo(
             camera_id=camera_id,
             model=model,
@@ -144,7 +145,8 @@ class QhyCamera(CameraBase):
             pixel_width_um=pw,
             pixel_height_um=ph,
             max_bit_depth=bpp,
-            is_color=False,
+            is_color=is_color,
+            bayer_pattern="RGGB" if is_color else "",
         )
 
     def get_pre_open_info(self) -> CameraInfo | None:
@@ -182,6 +184,7 @@ class QhyCamera(CameraBase):
         self._effective_area = sdk.get_effective_area(self._handle)
         ex, ey, ew, eh = self._effective_area
 
+        is_color = sdk.is_control_available(self._handle, ControlId.CAM_IS_COLOR)
         self._info = CameraInfo(
             camera_id=camera_id,
             model=camera_id.split("-")[0] if "-" in camera_id else camera_id,
@@ -190,7 +193,8 @@ class QhyCamera(CameraBase):
             pixel_width_um=pw,
             pixel_height_um=ph,
             max_bit_depth=16 if sdk.is_control_available(self._handle, ControlId.CAM_16BITS) else 8,
-            is_color=False,
+            is_color=is_color,
+            bayer_pattern="RGGB" if is_color else "",
         )
 
         # Allocate frame buffer

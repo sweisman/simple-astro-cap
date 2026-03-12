@@ -9,7 +9,7 @@ import time
 import numpy as np
 
 from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
-from .constants import ControlType, ImgType
+from .constants import BayerPattern, ControlType, ImgType
 from .sdk import AsiError, AsiSdk
 
 log = logging.getLogger(__name__)
@@ -469,8 +469,19 @@ class AsiCamera(CameraBase):
                 return prop
         raise RuntimeError(f"Camera ID {asi_id} not found")
 
+    _ASI_BAYER_MAP = {
+        BayerPattern.RG: "RGGB",
+        BayerPattern.BG: "BGGR",
+        BayerPattern.GR: "GRBG",
+        BayerPattern.GB: "GBRG",
+    }
+
     def _make_info(self, camera_id: str, prop) -> CameraInfo:
         name = prop.Name.decode("ascii", errors="replace").strip()
+        is_color = bool(prop.IsColorCam)
+        bayer = ""
+        if is_color:
+            bayer = self._ASI_BAYER_MAP.get(prop.BayerPattern, "RGGB")
         return CameraInfo(
             camera_id=camera_id,
             model=name,
@@ -479,5 +490,6 @@ class AsiCamera(CameraBase):
             pixel_width_um=prop.PixelSize,
             pixel_height_um=prop.PixelSize,
             max_bit_depth=prop.BitDepth,
-            is_color=bool(prop.IsColorCam),
+            is_color=is_color,
+            bayer_pattern=bayer,
         )
