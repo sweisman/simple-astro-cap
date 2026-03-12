@@ -1,6 +1,6 @@
 # Simple Astro Cap
 
-A simple, keyboard-centric camera capture application for QHY, ZWO, Player One, and Touptek astronomy cameras, built with Python and PySide6.
+A simple, keyboard-centric camera capture application for QHY, ZWO, Player One, and Touptek astronomy cameras, built with Python and PySide6. **Linux only** — see [Adding Windows support](#adding-windows-support) for porting notes.
 
 ## Why
 
@@ -213,6 +213,17 @@ Color cameras already work — they record raw Bayer data with correct metadata.
 - New dependency: `scipy.ndimage` or a small Bayer interpolation routine
 
 The software debayer approach is better for recording quality (no SDK color processing baked in), while hardware debayer is simpler and faster for display. A hybrid — raw Bayer for recording, SDK RGB for display — would require the SDK to deliver both formats simultaneously, which most SDKs don't support. The practical choice is software debayer for display with raw Bayer recording.
+
+### Adding Windows support
+
+The codebase is pure Python + PySide6 + ctypes, all cross-platform. The Linux-specific parts are:
+
+- **SDK library loading**: Backends look for `.so` files. On Windows, use `.dll` equivalents (all four vendors provide Windows SDKs). Add `sys.platform` checks to select the right library name/extension.
+- **QHY dependency pre-loading**: The `RTLD_GLOBAL` trick for pre-loading bundled libusb/libstdc++/libgcc_s is Linux-specific. On Windows, the QHY SDK bundles its own DLLs and handles dependencies internally — skip this step entirely.
+- **Settings path**: Uses `~/.config/simple-astro-cap/`. On Windows, use `%APPDATA%` (e.g., via the `platformdirs` package or a `sys.platform` check).
+- **udev rules**: Not applicable on Windows. USB cameras are accessible without special permissions. QHY firmware loading is handled by the vendor's Windows driver installer.
+
+Everything else works unchanged: GUI, recording, pipeline, frame processing, keyboard shortcuts, ffmpeg for MKV.
 
 ## License
 
