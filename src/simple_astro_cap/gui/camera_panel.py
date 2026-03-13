@@ -126,10 +126,12 @@ class CameraPanel(QGroupBox):
         self.zoom_combo = QComboBox()
         self.zoom_combo.addItem("Fit", None)
         self.zoom_combo.setEnabled(False)
+        self.zoom_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         add_field("zoom", "Zoom:", self.zoom_combo)
 
         self.bin_combo = QComboBox()
         self.bin_combo.setEnabled(False)
+        self.bin_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         add_field("binning", "Binning:", self.bin_combo)
 
         orientation_widget = QWidget()

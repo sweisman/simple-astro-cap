@@ -31,9 +31,9 @@ def compute_zoom_steps(
 
     result: list[tuple[str, float | None]] = [("Fit", None)]
 
-    # Evenly spaced from fit_scale to 1.0 (inclusive), `steps` total fixed levels
-    for i in range(steps):
-        scale = fit_scale + (1.0 - fit_scale) * i / (steps - 1)
+    # Evenly spaced from just above fit_scale to 1.0 (inclusive), `steps` levels
+    for i in range(1, steps + 1):
+        scale = fit_scale + (1.0 - fit_scale) * i / steps
         pct = round(scale * 100)
         result.append((f"{pct}%", scale))
 
@@ -61,10 +61,6 @@ class _ImageWidget(QWidget):
 
     def _update_size(self) -> None:
         if self._pixmap is None or self._scale is None:
-            self.setMinimumSize(1, 1)
-            self.setMaximumSize(16777215, 16777215)
-            from PySide6.QtWidgets import QSizePolicy
-            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             return
         w = int(self._pixmap.width() * self._scale)
         h = int(self._pixmap.height() * self._scale)
@@ -124,10 +120,16 @@ class LiveViewWidget(QScrollArea):
     def zoom_scale(self, scale: float | None) -> None:
         self._scale = scale
         if scale is None:
-            self.setWidgetResizable(True)
+            self.setWidgetResizable(False)
+            self._image_widget.setFixedSize(self.viewport().size())
         else:
             self.setWidgetResizable(False)
         self._image_widget.set_scale(scale)
+
+    def resizeEvent(self, event: object) -> None:
+        super().resizeEvent(event)
+        if self._scale is None:
+            self._image_widget.setFixedSize(self.viewport().size())
 
     def update_frame(self, frame: Frame) -> None:
         """Convert a Frame to QPixmap and schedule repaint."""

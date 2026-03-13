@@ -20,6 +20,55 @@ _SIM_INFO = CameraInfo(
 )
 
 
+def _generate_test_card(w: int, h: int, max_val: int, dtype: np.dtype) -> np.ndarray:
+    """Generate a SMPTE-style test card (grayscale)."""
+    img = np.zeros((h, w), dtype=np.float32)
+
+    # Top 2/3: 7 vertical bars (white, yellow, cyan, green, magenta, red, blue)
+    # In grayscale luminance: 100%, 89%, 70%, 59%, 41%, 30%, 11%
+    bar_h = h * 2 // 3
+    bar_levels = [1.0, 0.89, 0.70, 0.59, 0.41, 0.30, 0.11]
+    bar_w = w // 7
+    for i, level in enumerate(bar_levels):
+        x0 = i * bar_w
+        x1 = (i + 1) * bar_w if i < 6 else w
+        img[:bar_h, x0:x1] = level * max_val
+
+    # Middle strip (1/12 height): reverse bars
+    strip_h = h // 12
+    strip_top = bar_h
+    strip_bot = bar_h + strip_h
+    rev_levels = list(reversed(bar_levels))
+    for i, level in enumerate(rev_levels):
+        x0 = i * bar_w
+        x1 = (i + 1) * bar_w if i < 6 else w
+        img[strip_top:strip_bot, x0:x1] = level * max_val
+
+    # Bottom section: ramp + black/white patches
+    bot_top = strip_bot
+    # Left third: grayscale ramp
+    ramp_w = w // 3
+    ramp = np.linspace(0, max_val, ramp_w, dtype=np.float32)
+    img[bot_top:, :ramp_w] = ramp[None, :]
+
+    # Middle third: 50% gray
+    mid_x0 = ramp_w
+    mid_x1 = 2 * ramp_w
+    img[bot_top:, mid_x0:mid_x1] = 0.5 * max_val
+
+    # Right third: alternating black/white checkerboard
+    check_w = (w - mid_x1)
+    check_size = max(4, check_w // 8)
+    for y in range(bot_top, h):
+        for x in range(mid_x1, w):
+            ry = (y - bot_top) // check_size
+            rx = (x - mid_x1) // check_size
+            if (ry + rx) % 2 == 0:
+                img[y, x] = max_val
+
+    return np.clip(img, 0, max_val).astype(dtype)
+
+
 class SimCamera(CameraBase):
     """Test-pattern camera for GUI development without hardware."""
 
@@ -32,6 +81,7 @@ class SimCamera(CameraBase):
         self._bit_depth = 8
         self._roi = ROI(0, 0, _SIM_INFO.sensor_width, _SIM_INFO.sensor_height)
         self._seq = 0
+        self._test_card: np.ndarray | None = None
 
     @staticmethod
     def enumerate() -> list[CameraInfo]:
@@ -137,16 +187,18 @@ class SimCamera(CameraBase):
         max_val = 255 if self._bit_depth == 8 else 65535
         dtype = np.uint8 if self._bit_depth == 8 else np.uint16
 
-        # Gradient + noise pattern that responds to gain/exposure
-        brightness = min(1.0, (self._gain / 100.0) * (self._exposure_us / 50000.0))
-        y_grad = np.linspace(0, brightness * max_val * 0.7, h, dtype=np.float32)
-        x_grad = np.linspace(0, brightness * max_val * 0.3, w, dtype=np.float32)
-        pattern = (y_grad[:, None] + x_grad[None, :]).clip(0, max_val).astype(dtype)
+        # Cache test card; regenerate if dimensions or depth change
+        if (self._test_card is None
+                or self._test_card.shape != (h, w)
+                or self._test_card.dtype != dtype):
+            self._test_card = _generate_test_card(w, h, max_val, dtype)
 
-        # Add some noise
+        # Apply brightness from exposure/gain and add noise
+        brightness = min(1.0, (self._gain / 100.0) * (self._exposure_us / 50000.0))
+        frame_data = (self._test_card.astype(np.float32) * brightness).clip(0, max_val)
         noise_scale = max(1, int(max_val * 0.02 * (self._gain / 100.0)))
         noise = np.random.randint(0, noise_scale, (h, w), dtype=dtype)
-        frame_data = np.clip(pattern.astype(np.int32) + noise, 0, max_val).astype(dtype)
+        frame_data = np.clip(frame_data + noise, 0, max_val).astype(dtype)
 
         return Frame(
             data=frame_data,
