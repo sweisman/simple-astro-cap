@@ -70,7 +70,7 @@ class MultiCamera(CameraBase):
                     self._camera_map[cam.camera_id] = backend
                 all_cameras.extend(cameras)
             except Exception as e:
-                log.warning("Backend enumerate failed: %s", e)
+                log.debug("Backend enumerate failed: %s", e)
         return all_cameras
 
     def _get_backend(self, camera_id: str) -> CameraBase:

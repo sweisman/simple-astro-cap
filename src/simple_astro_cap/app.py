@@ -15,15 +15,16 @@ log = logging.getLogger(__name__)
 
 
 def run(argv: list[str] | None = None) -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
-    )
-
     if argv is None:
         argv = sys.argv
 
+    debug = "--debug" in argv or "-d" in argv
     use_sim = "--sim" in argv
+
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+    )
 
     # Restore default SIGINT handler so Ctrl+C in the terminal works
     signal.signal(signal.SIGINT, signal.SIG_DFL)
