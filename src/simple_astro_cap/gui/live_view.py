@@ -63,6 +63,8 @@ class _ImageWidget(QWidget):
         if self._pixmap is None or self._scale is None:
             self.setMinimumSize(1, 1)
             self.setMaximumSize(16777215, 16777215)
+            from PySide6.QtWidgets import QSizePolicy
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             return
         w = int(self._pixmap.width() * self._scale)
         h = int(self._pixmap.height() * self._scale)
