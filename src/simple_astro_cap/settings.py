@@ -26,6 +26,7 @@ class AppSettings:
     sidebar_width: int = 250
     snap_sequence: int = 0
     session_sequence: int = 0
+    battery_saver: bool = False
 
 
 def load_settings() -> AppSettings:

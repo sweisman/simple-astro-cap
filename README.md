@@ -26,6 +26,7 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Software auto-exposure** — always available; adjusts exposure based on frame brightness with proportional control; mutually exclusive with hardware auto
 - **Brightness/contrast controls** — display-only adjustments (keyboard B/C to focus, left/right to adjust)
 - **Histogram** — toggleable live histogram in sidebar
+- **Battery saver mode** — throttles display to 1 fps during recording to reduce CPU/GPU load on small field devices; checkbox enabled only while recording, state persisted
 - **Recording locks** — only zoom, exposure, and gain are adjustable during recording; all other settings locked
 - **Frame drop detection** — sequence gap analysis reported in session `.txt` and status bar
 - **Raw Bayer metadata** — color cameras record raw (un-debayered) data with correct Bayer pattern metadata in SER headers, PNG/TIFF tags, MKV metadata, and session summaries; stacking software can debayer after the fact

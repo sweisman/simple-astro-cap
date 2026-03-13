@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -86,6 +87,14 @@ class RecordingPanel(QGroupBox):
         self.record_btn.setStyleSheet("")
         layout.addRow(self.record_btn)
 
+        # Battery saver — only active during recording
+        self.battery_saver_check = QCheckBox("Battery saver (1 fps display)")
+        self.battery_saver_check.setToolTip(
+            "Update display once per second while recording to save power"
+        )
+        self.battery_saver_check.setEnabled(False)
+        layout.addRow(self.battery_saver_check)
+
     def _connect_signals(self) -> None:
         self.snap_btn.clicked.connect(self.capture_single_requested.emit)
         self.record_btn.clicked.connect(self._on_record_btn)
@@ -120,6 +129,7 @@ class RecordingPanel(QGroupBox):
         self.frame_count_spin.setEnabled(not recording)
         self.snap_btn.setEnabled(not recording)
         self.snap_format_combo.setEnabled(not recording)
+        self.battery_saver_check.setEnabled(recording)
 
     @property
     def output_dir(self) -> Path:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -65,6 +66,7 @@ class MainWindow(QMainWindow):
         self._histogram_interval = 4  # update histogram every Nth frame
         self._last_frame: Frame | None = None
         self._soft_auto: SoftwareAutoExposure | None = None
+        self._last_display_time = 0.0  # monotonic seconds, for battery saver
 
         self.setWindowTitle("Simple Astro Cap")
         self.setMinimumSize(1024, 600)
@@ -504,6 +506,14 @@ class MainWindow(QMainWindow):
                      frame.data.min(), frame.data.max())
         self._fps_count += 1
         self._last_frame = frame
+
+        # Battery saver: skip display updates to ~1 fps while recording
+        if (self._recorder is not None
+                and self._recording_panel.battery_saver_check.isChecked()):
+            now = time.monotonic()
+            if now - self._last_display_time < 1.0:
+                return
+            self._last_display_time = now
 
         # Histogram on full-res data, every Nth frame
         if self._histogram_check.isChecked():
@@ -1010,6 +1020,9 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self._recording_panel.snap_format_combo.setCurrentIndex(idx)
 
+        # Battery saver
+        self._recording_panel.battery_saver_check.setChecked(s.battery_saver)
+
         # Lens
         self._lens_edit.setText(s.lens_description)
 
@@ -1028,6 +1041,7 @@ class MainWindow(QMainWindow):
             output_dir=self._recording_panel.output_dir_edit.text(),
             format_name=self._recording_panel.format_name,
             snap_format=self._recording_panel.snap_format,
+            battery_saver=self._recording_panel.battery_saver_check.isChecked(),
             lens_description=self._lens_edit.text(),
             sidebar_width=self._splitter.sizes()[1] if len(self._splitter.sizes()) > 1 else 250,
             snap_sequence=self._settings.snap_sequence,
