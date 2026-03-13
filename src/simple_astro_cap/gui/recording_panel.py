@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
@@ -48,28 +50,6 @@ class RecordingPanel(QGroupBox):
         dir_layout.addRow(self.output_dir_edit, self.browse_btn)
         layout.addRow("Output:", dir_widget)
 
-        # Format
-        self.format_combo = QComboBox()
-        self.format_combo.addItems(["PNG", "SER", "MKV"])
-        layout.addRow("Format:", self.format_combo)
-
-        # Time (seconds)
-        self.time_spin = QSpinBox()
-        self.time_spin.setRange(0, 999999)
-        self.time_spin.setValue(0)
-        self.time_spin.setSpecialValueText("--")
-        self.time_spin.setSuffix(" s")
-        self.time_spin.setToolTip("Recording duration in seconds (0 = no limit)")
-        layout.addRow("Time:", self.time_spin)
-
-        # Frame count
-        self.frame_count_spin = QSpinBox()
-        self.frame_count_spin.setRange(0, 999999)
-        self.frame_count_spin.setValue(0)
-        self.frame_count_spin.setSpecialValueText("--")
-        self.frame_count_spin.setToolTip("Number of frames to record (0 = no limit)")
-        layout.addRow("Frames:", self.frame_count_spin)
-
         # Snap format + button
         self.snap_format_combo = QComboBox()
         self.snap_format_combo.addItems(["PNG", "TIFF"])
@@ -77,10 +57,43 @@ class RecordingPanel(QGroupBox):
         self.snap_btn = QPushButton("Snap [Space]")
         self.snap_btn.setToolTip("Capture a single frame")
         snap_widget = QWidget()
-        snap_layout = QFormLayout(snap_widget)
+        snap_layout = QHBoxLayout(snap_widget)
         snap_layout.setContentsMargins(0, 0, 0, 0)
-        snap_layout.addRow(self.snap_format_combo, self.snap_btn)
+        snap_layout.setSpacing(4)
+        snap_layout.addWidget(self.snap_format_combo)
+        snap_layout.addWidget(self.snap_btn, 1)
         layout.addRow("Snap:", snap_widget)
+
+        # Format / Time / Frames — combined row
+        rec_opts = QWidget()
+        rec_opts_layout = QHBoxLayout(rec_opts)
+        rec_opts_layout.setContentsMargins(0, 0, 0, 0)
+        rec_opts_layout.setSpacing(4)
+
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(["SER", "PNG", "MKV"])
+        rec_opts_layout.addWidget(self.format_combo)
+
+        self.time_spin = QSpinBox()
+        self.time_spin.setRange(0, 9999)
+        self.time_spin.setValue(0)
+        self.time_spin.setSpecialValueText("--")
+        self.time_spin.setSuffix(" s")
+        self.time_spin.setToolTip("Recording duration in seconds (0 = no limit)")
+        self.time_spin.setMaximumWidth(70)
+        rec_opts_layout.addWidget(QLabel("Secs:"))
+        rec_opts_layout.addWidget(self.time_spin)
+
+        self.frame_count_spin = QSpinBox()
+        self.frame_count_spin.setRange(0, 99999)
+        self.frame_count_spin.setValue(0)
+        self.frame_count_spin.setSpecialValueText("--")
+        self.frame_count_spin.setToolTip("Number of frames to record (0 = no limit)")
+        self.frame_count_spin.setMaximumWidth(70)
+        rec_opts_layout.addWidget(QLabel("Frames:"))
+        rec_opts_layout.addWidget(self.frame_count_spin)
+
+        layout.addRow(rec_opts)
 
         # Record button
         self.record_btn = QPushButton("Record [R]")
