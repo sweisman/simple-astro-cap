@@ -82,6 +82,8 @@ class SimCamera(CameraBase):
         self._roi = ROI(0, 0, _SIM_INFO.sensor_width, _SIM_INFO.sensor_height)
         self._seq = 0
         self._test_card: np.ndarray | None = None
+        self._display_card: np.ndarray | None = None
+        self._card_brightness: float = -1.0
 
     @staticmethod
     def enumerate() -> list[CameraInfo]:
@@ -192,13 +194,19 @@ class SimCamera(CameraBase):
                 or self._test_card.shape != (h, w)
                 or self._test_card.dtype != dtype):
             self._test_card = _generate_test_card(w, h, max_val, dtype)
+            self._card_brightness = -1.0  # force recalc
 
-        # Apply brightness from exposure/gain and add noise
+        # Cache brightness-adjusted card; only recompute when exposure/gain change
         brightness = min(1.0, (self._gain / 100.0) * (self._exposure_us / 50000.0))
-        frame_data = (self._test_card.astype(np.float32) * brightness).clip(0, max_val)
-        noise_scale = max(1, int(max_val * 0.02 * (self._gain / 100.0)))
-        noise = np.random.randint(0, noise_scale, (h, w), dtype=dtype)
-        frame_data = np.clip(frame_data + noise, 0, max_val).astype(dtype)
+        if brightness != self._card_brightness:
+            self._display_card = (
+                (self._test_card.astype(np.float32) * brightness)
+                .clip(0, max_val)
+                .astype(dtype)
+            )
+            self._card_brightness = brightness
+
+        frame_data = self._display_card
 
         return Frame(
             data=frame_data,

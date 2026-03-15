@@ -87,5 +87,5 @@ class PngRecorder(RecorderBase):
         if self._telescope:
             meta.add_text("Telescope", self._telescope)
 
-        img.save(filepath, pnginfo=meta)
+        img.save(filepath, pnginfo=meta, compress_level=0)
 
