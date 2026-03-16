@@ -90,6 +90,12 @@ class SimCamera(CameraBase):
     def enumerate() -> list[CameraInfo]:
         return [_SIM_INFO]
 
+    def pre_open(self, camera_id: str) -> None:
+        pass
+
+    def get_pre_open_info(self) -> CameraInfo:
+        return _SIM_INFO
+
     def set_connect_roi(self, roi: ROI) -> None:
         self._pending_roi = roi
 
