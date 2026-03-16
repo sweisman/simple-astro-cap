@@ -539,12 +539,16 @@ class CameraPanel(QGroupBox):
             return
         self.resolution_combo.clear()
         self.resolution_combo.addItem(f"{width}x{height} (Full)", (width, height))
-        standard = [
-            (3840, 2160), (3200, 1800), (2560, 1440), (1920, 1080),
-            (1600, 900), (1280, 720), (1024, 768), (800, 600), (640, 480),
-        ]
-        for sw, sh in standard:
-            if sw < width and sh < height:
+        # Generate scaled-down options maintaining native aspect ratio
+        aspect = width / height
+        standard_widths = [3200, 2560, 1920, 1600, 1280, 1024, 800, 640]
+        for sw in standard_widths:
+            if sw >= width:
+                continue
+            sh = round(sw / aspect)
+            # Round to nearest even number for codec compatibility
+            sh = sh + (sh % 2)
+            if sh < height:
                 self.resolution_combo.addItem(f"{sw}x{sh}", (sw, sh))
         self.resolution_combo.setCurrentIndex(0)
 

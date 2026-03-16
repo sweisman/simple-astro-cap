@@ -81,6 +81,7 @@ class SimCamera(CameraBase):
         self._bit_depth = 8
         self._roi = ROI(0, 0, _SIM_INFO.sensor_width, _SIM_INFO.sensor_height)
         self._seq = 0
+        self._pending_roi: ROI | None = None
         self._test_card: np.ndarray | None = None
         self._display_card: np.ndarray | None = None
         self._card_brightness: float = -1.0
@@ -89,7 +90,13 @@ class SimCamera(CameraBase):
     def enumerate() -> list[CameraInfo]:
         return [_SIM_INFO]
 
+    def set_connect_roi(self, roi: ROI) -> None:
+        self._pending_roi = roi
+
     def connect(self, camera_id: str) -> None:
+        if self._pending_roi is not None:
+            self._roi = self._pending_roi
+            self._pending_roi = None
         self._connected = True
         self._seq = 0
 
