@@ -32,10 +32,13 @@ def compute_zoom_steps(
     result: list[tuple[str, float | None]] = [("Fit", None)]
 
     # Evenly spaced from just above fit_scale to 1.0 (inclusive), `steps` levels
+    seen_pcts: set[int] = set()
     for i in range(1, steps + 1):
         scale = fit_scale + (1.0 - fit_scale) * i / steps
         pct = round(scale * 100)
-        result.append((f"{pct}%", scale))
+        if pct not in seen_pcts:
+            seen_pcts.add(pct)
+            result.append((f"{pct}%", scale))
 
     return result
 

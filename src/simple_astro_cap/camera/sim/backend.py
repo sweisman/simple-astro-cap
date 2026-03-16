@@ -210,7 +210,7 @@ class SimCamera(CameraBase):
             self._card_brightness = -1.0  # force recalc
 
         # Cache brightness-adjusted card; only recompute when exposure/gain change
-        brightness = min(1.0, (self._gain / 100.0) * (self._exposure_us / 50000.0))
+        brightness = min(1.0, (self._gain / 100.0) * (self._exposure_us / 5000.0))
         if brightness != self._card_brightness:
             self._display_card = (
                 (self._test_card.astype(np.float32) * brightness)

@@ -371,14 +371,16 @@ class MainWindow(QMainWindow):
             return
 
         info = self._camera.get_info()
+        roi = self._camera.get_roi()
         self._camera_panel.set_connected(True)
         self._camera_panel.set_bin_modes(
             self._camera.get_supported_bin_modes(),
-            info.sensor_width, info.sensor_height,
+            roi.width, roi.height,
         )
 
-        # Update ROI spin boxes with actual sensor size
-        self._camera_panel.set_sensor_size(info.sensor_width, info.sensor_height)
+        # Populate resolution options if not already set by pre_open
+        if self._camera_panel.resolution_combo.count() <= 1:
+            self._camera_panel.set_sensor_size(info.sensor_width, info.sensor_height)
 
         # Set param ranges
         for param in (Param.EXPOSURE, Param.GAIN, Param.OFFSET):
@@ -400,8 +402,6 @@ class MainWindow(QMainWindow):
             auto_exposure=self._camera.supports_auto_exposure(),
             auto_gain=self._camera.supports_auto_gain(),
         )
-
-        roi = self._camera.get_roi()
         self._status_cam.setText(f"{info.model}")
         self._status_res.setText(f"{roi.width}x{roi.height} {bit_depth}bit")
 
@@ -731,7 +731,13 @@ class MainWindow(QMainWindow):
         vp = self._live_view.viewport().size()
         levels = compute_zoom_steps(image_w, image_h, vp.width(), vp.height())
         self._camera_panel.set_zoom_levels(levels)
-        self._live_view.zoom_scale = None  # reset to Fit
+        # Default to 100% if image fits in viewport, otherwise Fit
+        fits = (image_w <= vp.width() and image_h <= vp.height())
+        if fits and len(levels) > 1:
+            self._camera_panel.zoom_combo.setCurrentIndex(len(levels) - 1)
+            self._live_view.zoom_scale = levels[-1][1]
+        else:
+            self._live_view.zoom_scale = None
 
     # --- Recording ---
 
