@@ -323,8 +323,9 @@ class CameraPanel(QGroupBox):
         """Smart exposure stepping with automatic unit switching.
 
         us mode:  ±10us.  At >=1000us going up → switch to ms.
-        ms mode:  ±1ms.   At <1ms going down → switch to us at 990us.
-                           At >=1000ms going up → switch to s.
+        ms mode:  ±0.25ms (1–10ms), ±1ms (10ms+).
+                  At <1ms going down → switch to us at 990us.
+                  At >=1000ms going up → switch to s.
         s mode:   ±0.25s. At <1s going down → switch to ms at 990ms.
         """
         unit: ExposureUnit = self.exposure_unit_combo.currentData()
@@ -341,7 +342,8 @@ class CameraPanel(QGroupBox):
             self.exposure_spin.setValue(new_val)
 
         elif unit == ExposureUnit.MILLISECONDS:
-            new_val = val + direction * 1
+            step = 0.25 if val < 10 else 1.0
+            new_val = val + direction * step
             if direction < 0 and new_val < 1:
                 # Switch to us
                 self._set_exposure_unit(ExposureUnit.MICROSECONDS, 990.0)
@@ -377,7 +379,7 @@ class CameraPanel(QGroupBox):
             self.exposure_spin.setDecimals(0)
             self.exposure_spin.setRange(0, 1000)
         elif unit == ExposureUnit.MILLISECONDS:
-            self.exposure_spin.setDecimals(0)
+            self.exposure_spin.setDecimals(2)
             self.exposure_spin.setRange(0, 1000)
         elif unit == ExposureUnit.SECONDS:
             self.exposure_spin.setDecimals(2)

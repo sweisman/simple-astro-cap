@@ -11,7 +11,7 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Multi-camera support** — QHY, ZWO ASI, Player One, and Touptek cameras via native SDK bindings
 - **Live camera view** with dynamic zoom from fit-to-viewport through 100%, with scroll bars at higher zoom levels
 - **Keyboard-centric controls** — field navigation, exposure/gain/zoom adjustment, capture, and recording all driven by keyboard
-- **Smart exposure stepping** — automatic unit switching (µs ±10, ms ±1, s ±0.25) with seamless transitions at boundaries
+- **Smart exposure stepping** — automatic unit switching (µs ±10, ms ±0.25/±1, s ±0.25) with seamless transitions at boundaries; finer 0.25ms steps in the 1–10ms range
 - **Portrait/landscape orientation** — toggle frame rotation, affects both display and recordings
 - **PNG/TIFF, SER, and MKV recording** — single-frame snapshots (PNG or TIFF), multi-frame sequences, or lossless video
 - **SER file format** — standard free-astro.org format with timestamps and metadata, compatible with stacking software like AutoStakkert and RegiStax
@@ -74,7 +74,7 @@ python run.py --sim
 | `Ctrl+G` | Toggle auto-gain |
 | `Ctrl+Q` | Quit |
 
-The focused field's label is bolded for visibility. Exposure stepping is smart: ±10 µs in microsecond range, ±1 ms in millisecond range, ±0.25 s in second range, with automatic unit switching at boundaries.
+The focused field's label is bolded for visibility. Exposure stepping is smart: ±10 µs in microsecond range, ±0.25 ms from 1–10 ms then ±1 ms above 10 ms, ±0.25 s in second range, with automatic unit switching at boundaries.
 
 ## Architecture
 
