@@ -151,6 +151,15 @@ class MultiCamera(CameraBase):
     def get_sensor_temperature(self) -> float | None:
         return self._active.get_sensor_temperature() if self._active else None
 
+    def supports_hdr(self) -> bool:
+        return self._active.supports_hdr() if self._active else False
+
+    def set_hdr(self, enabled: bool) -> None:
+        self._active.set_hdr(enabled)
+
+    def get_hdr(self) -> bool:
+        return self._active.get_hdr() if self._active else False
+
     def set_exposure(self, microseconds: float) -> None:
         self._active.set_exposure(microseconds)
 

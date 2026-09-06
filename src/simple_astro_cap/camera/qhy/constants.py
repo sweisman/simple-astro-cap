@@ -53,6 +53,18 @@ class ControlId(IntEnum):
     # Auto-exposure (SDK-internal 3A system manages exposure + gain together)
     CAM_AUTOEXPOSURE = 88  # 0x58: SetQHYCCDParam → SetAutoExposure
 
+    # Native HDR (IMX585-based bodies: QHY5III585, MiniCam8). IDs from
+    # qhyccdcamdef.h; the SDK fits high = k*low + b between its two
+    # 12-bit gain channels and re-aligns them into one 16-bit frame.
+    # CONTROL_HDR must be confirmed on hardware with IsQHYCCDControlAvailable.
+    CONTROL_HDR = 97  # 0 = off, 1 = on
+    CONTROL_HDR_H_K = 98
+    CONTROL_HDR_H_B = 99
+    CONTROL_HDR_L_K = 100
+    CONTROL_HDR_L_B = 101
+    CONTROL_HDR_X = 102
+    CONTROL_HDR_SHOWKB = 103
+
 
 class StreamMode(IntEnum):
     SINGLE = 0

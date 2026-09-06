@@ -51,6 +51,9 @@ class CameraPanel(QGroupBox):
     gain_changed = Signal(float)
     auto_gain_toggled = Signal(bool)
     offset_changed = Signal(float)
+    hdr_toggled = Signal(bool)  # native (hardware) HDR
+    soft_hdr_toggled = Signal(bool)  # simulated gain-bracket HDR (snap only)
+    star_gain_changed = Signal(float)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Camera", parent)
@@ -189,6 +192,27 @@ class CameraPanel(QGroupBox):
         self.auto_gain_check.setToolTip("Not supported by this camera")
         add_field("auto_gain", "", self.auto_gain_check)
 
+        self.hdr_check = QCheckBox("HDR (hardware)")
+        self.hdr_check.setEnabled(False)
+        self.hdr_check.setToolTip("Not supported by this camera")
+        add_field("hdr", "", self.hdr_check)
+
+        self.soft_hdr_check = QCheckBox("HDR (simulated, snap only)")
+        self.soft_hdr_check.setEnabled(False)
+        self.soft_hdr_check.setToolTip(
+            "Snap captures a frame at Gain and one at Star gain, then merges them"
+        )
+        add_field("soft_hdr", "", self.soft_hdr_check)
+
+        self.star_gain_spin = QDoubleSpinBox()
+        self.star_gain_spin.setDecimals(0)
+        self.star_gain_spin.setRange(0, 100)
+        self.star_gain_spin.setValue(80)
+        self.star_gain_spin.setKeyboardTracking(False)
+        self.star_gain_spin.setEnabled(False)
+        self.star_gain_spin.setToolTip("High-gain bracket for simulated HDR (stars)")
+        add_field("star_gain", "Star gain:", self.star_gain_spin)
+
         self.offset_spin = QDoubleSpinBox()
         self.offset_spin.setDecimals(0)
         self.offset_spin.setRange(0, 255)
@@ -239,6 +263,9 @@ class CameraPanel(QGroupBox):
         self.gain_spin.valueChanged.connect(lambda v: self.gain_changed.emit(v))
         self.auto_gain_check.toggled.connect(self._on_auto_gain_toggled)
         self.offset_spin.valueChanged.connect(lambda v: self.offset_changed.emit(v))
+        self.hdr_check.toggled.connect(self._on_hdr_toggled)
+        self.soft_hdr_check.toggled.connect(self._on_soft_hdr_toggled)
+        self.star_gain_spin.valueChanged.connect(lambda v: self.star_gain_changed.emit(v))
 
     # --- Keyboard navigation ---
 
@@ -466,6 +493,24 @@ class CameraPanel(QGroupBox):
         self.gain_spin.setEnabled(not checked)
         self.auto_gain_toggled.emit(checked)
 
+    def _on_hdr_toggled(self, checked: bool) -> None:
+        if checked:
+            # Mutual exclusion: disable simulated HDR
+            self.soft_hdr_check.blockSignals(True)
+            self.soft_hdr_check.setChecked(False)
+            self.soft_hdr_check.blockSignals(False)
+            self.star_gain_spin.setEnabled(False)
+        self.hdr_toggled.emit(checked)
+
+    def _on_soft_hdr_toggled(self, checked: bool) -> None:
+        if checked:
+            # Mutual exclusion: disable hardware HDR
+            self.hdr_check.blockSignals(True)
+            self.hdr_check.setChecked(False)
+            self.hdr_check.blockSignals(False)
+        self.star_gain_spin.setEnabled(checked and self._connected)
+        self.soft_hdr_toggled.emit(checked)
+
     def _on_connect_btn(self) -> None:
         if self.connect_btn.text() == "Connect":
             self.connect_requested.emit()
@@ -571,6 +616,17 @@ class CameraPanel(QGroupBox):
         else:
             self.auto_gain_check.setToolTip("")
 
+    def set_hdr_capability(self, native_hdr: bool) -> None:
+        """Enable/disable the hardware HDR checkbox based on camera capability."""
+        self.hdr_check.setEnabled(native_hdr)
+        if not native_hdr:
+            self.hdr_check.blockSignals(True)
+            self.hdr_check.setChecked(False)
+            self.hdr_check.blockSignals(False)
+            self.hdr_check.setToolTip("Not supported by this camera")
+        else:
+            self.hdr_check.setToolTip("")
+
     def set_connected(self, connected: bool) -> None:
         self._connected = connected
         self.connect_btn.setText("Disconnect" if connected else "Connect")
@@ -594,6 +650,8 @@ class CameraPanel(QGroupBox):
         self.gain_spin.setEnabled(connected)
         self.offset_spin.setEnabled(connected)
         self.soft_auto_exposure_check.setEnabled(connected)
+        self.soft_hdr_check.setEnabled(connected)
+        self.star_gain_spin.setEnabled(connected and self.soft_hdr_check.isChecked())
         self._set_postconnect_labels_enabled(connected)
         if not connected:
             # Reset auto checkboxes when disconnecting
@@ -602,9 +660,19 @@ class CameraPanel(QGroupBox):
             self.auto_gain_check.setChecked(False)
             self.auto_gain_check.setEnabled(False)
             self.soft_auto_exposure_check.setChecked(False)
+            # HDR checks are cleared silently so the saved mode survives a
+            # disconnect (MainWindow re-applies it on the next connect).
+            for check in (self.hdr_check, self.soft_hdr_check):
+                check.blockSignals(True)
+                check.setChecked(False)
+                check.blockSignals(False)
+            self.hdr_check.setEnabled(False)
 
     def set_recording(self, recording: bool) -> None:
         self.connect_btn.setEnabled(not recording)
+        self.hdr_check.setEnabled(not recording and self.hdr_check.toolTip() == "")
+        self.soft_hdr_check.setEnabled(not recording)
+        self.star_gain_spin.setEnabled(not recording and self.soft_hdr_check.isChecked())
         self.bin_combo.setEnabled(not recording)
         self.landscape_radio.setEnabled(not recording)
         self.portrait_radio.setEnabled(not recording)
@@ -635,6 +703,10 @@ class CameraPanel(QGroupBox):
             self.gain_spin.setRange(prange.min_val, prange.max_val)
             self.gain_spin.setSingleStep(prange.step)
             self.gain_spin.blockSignals(False)
+            self.star_gain_spin.blockSignals(True)
+            self.star_gain_spin.setRange(prange.min_val, prange.max_val)
+            self.star_gain_spin.setSingleStep(prange.step)
+            self.star_gain_spin.blockSignals(False)
         elif param == Param.OFFSET:
             self.offset_spin.blockSignals(True)
             self.offset_spin.setRange(prange.min_val, prange.max_val)

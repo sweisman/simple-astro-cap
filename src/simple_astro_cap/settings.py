@@ -27,6 +27,8 @@ class AppSettings:
     snap_sequence: int = 0
     session_sequence: int = 0
     battery_saver: bool = False
+    hdr_mode: str = "off"  # "off" | "native" | "simulated"
+    star_gain: float = 80.0  # high-gain bracket for simulated HDR
 
 
 def load_settings() -> AppSettings:

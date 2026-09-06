@@ -21,3 +21,12 @@ class DisplayBridge(QObject):
 
     def on_frame(self, frame: Frame) -> None:
         self.frame_ready.emit(frame)
+
+
+class BracketBridge(QObject):
+    """Hops an HDR bracket result from the harness thread to the GUI thread."""
+
+    done = Signal(object, object, str)  # low Frame | None, high Frame | None, error
+
+    def on_done(self, low: Frame | None, high: Frame | None, error: str) -> None:
+        self.done.emit(low, high, error)

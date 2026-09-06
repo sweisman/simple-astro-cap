@@ -24,6 +24,8 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Sensor temperature** — live readout in the status bar (when supported by camera)
 - **Hardware auto-exposure/gain** — enabled when the camera supports it; greyed out otherwise
 - **Software auto-exposure** — always available; adjusts exposure based on frame brightness with proportional control; mutually exclusive with hardware auto
+- **HDR (hardware)** — toggles the sensor's native HDR mode when the SDK exposes one (QHY IMX585 bodies: QHY5III585, MiniCam8); greyed out otherwise
+- **HDR (simulated, snap only)** — Snap captures a low-gain frame at Gain and a high-gain frame at Star gain (same exposure), then writes `-lo`, `-hi`, and a merged 16-bit linear `-hdr` file. The merge fits `high = k·low + b` on pixels valid in both frames and uses the high-gain frame wherever it is unclipped. Intended for planet-plus-stars fields (e.g. Mars parallax plate solving)
 - **Brightness/contrast controls** — display-only adjustments (keyboard B/C to focus, left/right to adjust)
 - **Histogram** — toggleable live histogram in sidebar
 - **Battery saver mode** — throttles display to 1 fps during recording to reduce CPU/GPU load on small field devices; checkbox enabled only while recording, state persisted
@@ -177,6 +179,7 @@ The QHY SDK has several quirks that required workarounds:
 - **SetQHYCCDReadMode**: Not called — AstroDMx doesn't call it and the camera works without it.
 - **Auto-exposure**: Control ID 88 (0x58) via `SetQHYCCDParam` enables the SDK's internal 3A auto-exposure system, which manages both exposure and gain together. `QHYCCD_SetAutoEXPmessureValue` sets the target brightness. These signatures were reverse-engineered from the shared library as they're undocumented.
 - **USB traffic**: Currently hardcoded to 30; not yet exposed as a user control.
+- **Native HDR**: Control ID 97 (`CONTROL_HDR` in `qhyccdcamdef.h`) via `SetQHYCCDParam`; only the QHY5III585 and MiniCam8 classes in the bundled SDK implement it. The SDK fits k/b between its two 12-bit gain channels and re-aligns them into one 16-bit frame, so 16-bit mode should be selected. The ID is taken from the header and has not yet been confirmed on hardware.
 
 ## Testing needed
 

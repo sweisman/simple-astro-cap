@@ -361,6 +361,29 @@ class QhyCamera(CameraBase):
     def get_auto_gain(self) -> bool:
         return self.get_auto_exposure()
 
+    # --- Native HDR ---
+    # Only IMX585-based bodies (QHY5III585, MiniCam8) report CONTROL_HDR.
+
+    def supports_hdr(self) -> bool:
+        self._require_connected()
+        sdk = self._get_sdk()
+        return sdk.is_control_available(self._handle, ControlId.CONTROL_HDR)
+
+    def set_hdr(self, enabled: bool) -> None:
+        self._require_connected()
+        sdk = self._get_sdk()
+        sdk.set_param(self._handle, ControlId.CONTROL_HDR, 1.0 if enabled else 0.0)
+        log.info("Native HDR %s", "enabled" if enabled else "disabled")
+
+    def get_hdr(self) -> bool:
+        if not self._connected:
+            return False
+        sdk = self._get_sdk()
+        try:
+            return sdk.get_param(self._handle, ControlId.CONTROL_HDR) != 0.0
+        except Exception:
+            return False
+
     def get_sensor_temperature(self) -> float | None:
         if not self._connected:
             return None

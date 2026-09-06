@@ -69,6 +69,45 @@ def _generate_test_card(w: int, h: int, max_val: int, dtype: np.dtype) -> np.nda
     return np.clip(img, 0, max_val).astype(dtype)
 
 
+# Latent scene dynamic range (relative to the brightest object, the planet).
+_CARD_LEVEL = 0.02   # test card scaled down to faint background
+_STAR_LEVEL = 0.03   # faint point sources
+_PLANET_LEVEL = 1.0  # bright disc
+# Native-HDR compression: scene is divided by this so the planet no longer
+# clips at gains where the stars are visible.
+_NATIVE_HDR_COMPRESSION = 16.0
+
+
+def _generate_scene(w: int, h: int, max_val: int) -> np.ndarray:
+    """Build a float32 high-dynamic-range scene: faint card + stars + planet.
+
+    Values are in output units (0..max_val) at "unity" brightness, but the
+    planet is `1/_STAR_LEVEL` times brighter than the stars so that no single
+    gain shows both without clipping.
+    """
+    card = _generate_test_card(w, h, max_val, np.float32).astype(np.float32)
+    scene = card * _CARD_LEVEL
+
+    # Sparse deterministic star field
+    rng = np.random.default_rng(585)
+    n_stars = max(20, (w * h) // 40_000)
+    ys = rng.integers(0, h, n_stars)
+    xs = rng.integers(0, w, n_stars)
+    scene[ys, xs] = _STAR_LEVEL * max_val
+
+    # Planet: filled disc, radius ~1/40 of the shorter side
+    r = max(4, min(w, h) // 40)
+    cy, cx = h // 3, w // 2
+    yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
+    disc = (yy * yy + xx * xx) <= r * r
+    y0, y1 = max(0, cy - r), min(h, cy + r + 1)
+    x0, x1 = max(0, cx - r), min(w, cx + r + 1)
+    sub = disc[(y0 - (cy - r)):(y1 - (cy - r)), (x0 - (cx - r)):(x1 - (cx - r))]
+    region = scene[y0:y1, x0:x1]
+    region[sub] = _PLANET_LEVEL * max_val
+    return scene
+
+
 class SimCamera(CameraBase):
     """Test-pattern camera for GUI development without hardware."""
 
@@ -83,8 +122,10 @@ class SimCamera(CameraBase):
         self._seq = 0
         self._pending_roi: ROI | None = None
         self._test_card: np.ndarray | None = None
+        self._test_card_max: int = 0
         self._display_card: np.ndarray | None = None
         self._card_brightness: float = -1.0
+        self._hdr = False
 
     @staticmethod
     def enumerate() -> list[CameraInfo]:
@@ -141,6 +182,16 @@ class SimCamera(CameraBase):
 
     def get_gain(self) -> float:
         return self._gain
+
+    def supports_hdr(self) -> bool:
+        return True
+
+    def set_hdr(self, enabled: bool) -> None:
+        self._hdr = enabled
+        self._card_brightness = -1.0  # force re-render
+
+    def get_hdr(self) -> bool:
+        return self._hdr
 
     def set_bin_mode(self, bin_factor: int) -> None:
         self._bin = bin_factor
@@ -202,18 +253,22 @@ class SimCamera(CameraBase):
         max_val = 255 if self._bit_depth == 8 else 65535
         dtype = np.uint8 if self._bit_depth == 8 else np.uint16
 
-        # Cache test card; regenerate if dimensions or depth change
+        # Cache latent HDR scene; regenerate if dimensions or depth change
         if (self._test_card is None
                 or self._test_card.shape != (h, w)
-                or self._test_card.dtype != dtype):
-            self._test_card = _generate_test_card(w, h, max_val, dtype)
+                or self._test_card_max != max_val):
+            self._test_card = _generate_scene(w, h, max_val)
+            self._test_card_max = max_val
             self._card_brightness = -1.0  # force recalc
 
-        # Cache brightness-adjusted card; only recompute when exposure/gain change
-        brightness = min(1.0, (self._gain / 100.0) * (self._exposure_us / 5000.0))
+        # Cache brightness-adjusted scene; only recompute when exposure/gain/HDR change.
+        # Not clamped to 1.0: the planet is meant to clip at star gain.
+        brightness = (self._gain / 100.0) * (self._exposure_us / 5000.0)
+        if self._hdr:
+            brightness /= _NATIVE_HDR_COMPRESSION
         if brightness != self._card_brightness:
             self._display_card = (
-                (self._test_card.astype(np.float32) * brightness)
+                (self._test_card * brightness)
                 .clip(0, max_val)
                 .astype(dtype)
             )

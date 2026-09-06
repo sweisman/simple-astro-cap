@@ -168,6 +168,20 @@ class CameraBase(ABC):
         """Return True if hardware auto-gain is currently enabled."""
         return False
 
+    # --- Native HDR ---
+
+    def supports_hdr(self) -> bool:
+        """Return True if the camera has a native (sensor/SDK) HDR mode."""
+        return False
+
+    def set_hdr(self, enabled: bool) -> None:
+        """Enable or disable native HDR. Call with live streaming stopped."""
+        raise NotImplementedError("Native HDR not supported by this backend")
+
+    def get_hdr(self) -> bool:
+        """Return True if native HDR is currently enabled."""
+        return False
+
     # --- Sensor temperature ---
 
     def get_sensor_temperature(self) -> float | None:
