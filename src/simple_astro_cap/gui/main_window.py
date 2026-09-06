@@ -200,11 +200,14 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self._status_fps = QLabel("-- fps")
         self._status_res = QLabel("")
+        self._status_hdr = QLabel("")  # "HDR" while hardware HDR is live
+        self._status_hdr.setStyleSheet("font-weight: bold;")
         self._status_cam = QLabel("Disconnected")
         self._status_rec = QLabel("")
         self._status_temp = QLabel("")
         self._status_bar.addWidget(self._status_cam)
         self._status_bar.addWidget(self._status_res)
+        self._status_bar.addWidget(self._status_hdr)
         self._status_bar.addPermanentWidget(self._status_rec)
         self._status_bar.addPermanentWidget(self._status_temp)
         self._status_bar.addPermanentWidget(self._status_fps)
@@ -306,8 +309,7 @@ class MainWindow(QMainWindow):
         self._camera_panel.auto_exposure_toggled.connect(self._on_auto_exposure_toggled)
         self._camera_panel.soft_auto_exposure_toggled.connect(self._on_soft_auto_exposure_toggled)
         self._camera_panel.auto_gain_toggled.connect(self._on_auto_gain_toggled)
-        self._camera_panel.hdr_toggled.connect(self._on_hdr_toggled)
-        self._camera_panel.soft_hdr_toggled.connect(self._on_soft_hdr_toggled)
+        self._camera_panel.hdr_mode_changed.connect(self._on_hdr_mode_changed)
 
         # Recording panel
         self._recording_panel.capture_single_requested.connect(self._on_capture_single)
@@ -411,10 +413,10 @@ class MainWindow(QMainWindow):
         # HDR: re-apply the saved mode (checks are cleared on disconnect)
         native_hdr = self._camera.supports_hdr()
         self._camera_panel.set_hdr_capability(native_hdr)
-        if self._settings.hdr_mode == "native" and native_hdr:
-            self._camera_panel.hdr_check.setChecked(True)
-        elif self._settings.hdr_mode == "simulated":
-            self._camera_panel.soft_hdr_check.setChecked(True)
+        saved_mode = self._settings.hdr_mode
+        if saved_mode == "native" and not native_hdr:
+            saved_mode = "off"
+        self._camera_panel.set_hdr_mode(saved_mode)  # emits hdr_mode_changed if not "off"
         self._status_cam.setText(f"{info.model}")
         self._status_res.setText(f"{roi.width}x{roi.height} {bit_depth}bit")
 
@@ -450,6 +452,7 @@ class MainWindow(QMainWindow):
         self._display_group.setEnabled(False)
         self._status_cam.setText("Disconnected")
         self._status_res.setText("")
+        self._status_hdr.setText("")
         self._status_temp.setText("")
 
     # --- Display ---
@@ -711,24 +714,20 @@ class MainWindow(QMainWindow):
 
     # --- HDR ---
 
-    def _on_hdr_toggled(self, enabled: bool) -> None:
-        self._settings.hdr_mode = "native" if enabled else "off"
-        if enabled:
-            self._abort_hdr_bracket()  # panel silently unchecked simulated HDR
-        if not self._apply_native_hdr(enabled):
-            self._camera_panel.hdr_check.blockSignals(True)
-            self._camera_panel.hdr_check.setChecked(not enabled)
-            self._camera_panel.hdr_check.blockSignals(False)
-            self._settings.hdr_mode = "native" if not enabled else "off"
-
-    def _on_soft_hdr_toggled(self, enabled: bool) -> None:
-        self._settings.hdr_mode = "simulated" if enabled else "off"
-        if enabled:
-            # Panel silently unchecked hardware HDR; make the camera follow.
-            if self._camera.is_connected() and self._camera.supports_hdr() and self._camera.get_hdr():
-                self._apply_native_hdr(False)
-        else:
+    def _on_hdr_mode_changed(self, mode: str) -> None:
+        previous = self._settings.hdr_mode
+        self._settings.hdr_mode = mode
+        if mode != "simulated":
             self._abort_hdr_bracket()
+        want_native = mode == "native"
+        if not self._apply_native_hdr(want_native):
+            # Camera refused: revert the combo without re-entering this handler
+            self._settings.hdr_mode = previous
+            self._camera_panel.hdr_combo.blockSignals(True)
+            self._camera_panel.set_hdr_mode(previous)
+            self._camera_panel.hdr_combo.blockSignals(False)
+            want_native = previous == "native"
+        self._status_hdr.setText("HDR" if want_native and self._camera.is_connected() else "")
 
     def _apply_native_hdr(self, enabled: bool) -> bool:
         """Set native HDR with live stopped, like a bin change. Returns success."""
@@ -807,7 +806,7 @@ class MainWindow(QMainWindow):
         if self._hdr_bracket is not None:
             return  # bracket already in progress
 
-        if self._camera_panel.soft_hdr_check.isChecked():
+        if self._camera_panel.hdr_mode == "simulated":
             if self._recorder is not None and self._recorder.is_recording():
                 self._status_rec.setText("HDR snap unavailable while recording (gain would change)")
                 return
@@ -825,8 +824,8 @@ class MainWindow(QMainWindow):
 
         frame = self._last_frame
         extra = {"Gain": f"{self._camera.get_gain():.0f}"}
-        if self._camera_panel.hdr_check.isChecked():
-            extra["Hdr"] = "native"
+        if self._camera_panel.hdr_mode == "native":
+            extra["Hdr"] = "hardware"
         stem = self._next_snap_stem()
         filename = self._save_snapshot(frame, stem, "", extra)
         self._status_rec.setText(f"Snap saved: {filename}")
@@ -989,6 +988,7 @@ class MainWindow(QMainWindow):
             sequence=seq,
             start_exposure_us=self._camera_panel.get_exposure_us(),
             start_gain=self._camera_panel.gain_spin.value(),
+            hdr=self._camera_panel.hdr_mode == "native",
             bit_depth=bit_depth,
             width=frame_w,
             height=frame_h,
@@ -1100,6 +1100,8 @@ class MainWindow(QMainWindow):
         ]
         if meta.get("bayer_pattern"):
             lines.append(f"bayer_pattern: {meta['bayer_pattern']}")
+        if meta.get("hdr"):
+            lines.append("hdr: hardware")
         try:
             txt_path.write_text("\n".join(lines) + "\n")
         except Exception as e:

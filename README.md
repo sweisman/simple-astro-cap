@@ -24,8 +24,8 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Sensor temperature** — live readout in the status bar (when supported by camera)
 - **Hardware auto-exposure/gain** — enabled when the camera supports it; greyed out otherwise
 - **Software auto-exposure** — always available; adjusts exposure based on frame brightness with proportional control; mutually exclusive with hardware auto
-- **HDR (hardware)** — toggles the sensor's native HDR mode when the SDK exposes one (QHY IMX585 bodies: QHY5III585, MiniCam8); greyed out otherwise
-- **HDR (simulated, snap only)** — Snap captures a low-gain frame at Gain and a high-gain frame at Star gain (same exposure), then writes `-lo`, `-hi`, and a merged 16-bit linear `-hdr` file. The merge fits `high = k·low + b` on pixels valid in both frames and uses the high-gain frame wherever it is unclipped. Intended for planet-plus-stars fields (e.g. Mars parallax plate solving)
+- **HDR mode** — one `HDR:` dropdown: *Off*, *Hardware* (listed only when the camera has native HDR: QHY IMX585 bodies such as QHY5III585 and MiniCam8; a live sensor mode that applies to view, recordings and snaps, shown as an `HDR` badge in the status bar and `hdr: hardware` in the session `.txt`), or *Simulated (snap only)*, which reveals a *Star gain* field
+- **Simulated HDR** — Snap captures a low-gain frame at Gain and a high-gain frame at Star gain (same exposure), then writes `-lo`, `-hi`, and a merged 16-bit linear `-hdr` file. The merge fits `high = k·low + b` on pixels valid in both frames and uses the high-gain frame wherever it is unclipped. Intended for planet-plus-stars fields (e.g. Mars parallax plate solving)
 - **Brightness/contrast controls** — display-only adjustments (keyboard B/C to focus, left/right to adjust)
 - **Histogram** — toggleable live histogram in sidebar
 - **Battery saver mode** — throttles display to 1 fps during recording to reduce CPU/GPU load on small field devices; checkbox enabled only while recording, state persisted
