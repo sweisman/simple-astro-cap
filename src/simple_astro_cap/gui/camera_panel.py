@@ -51,8 +51,7 @@ class CameraPanel(QGroupBox):
     gain_changed = Signal(float)
     auto_gain_toggled = Signal(bool)
     offset_changed = Signal(float)
-    hdr_mode_changed = Signal(str)  # "off" | "native" | "simulated"
-    star_gain_changed = Signal(float)
+    hdr_toggled = Signal(bool)  # hardware HDR (only shown on capable cameras)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Camera", parent)
@@ -191,24 +190,15 @@ class CameraPanel(QGroupBox):
         self.auto_gain_check.setToolTip("Not supported by this camera")
         add_field("auto_gain", "", self.auto_gain_check)
 
-        # HDR mode. "Hardware" is only listed when the camera has native HDR
-        # (a live sensor mode: affects view, recordings and snaps). "Simulated"
-        # is a snap-only gain bracket and reveals the Star gain row.
-        self.hdr_combo = QComboBox()
-        self.hdr_combo.setEnabled(False)
-        self._hdr_native_available = False
-        self._populate_hdr_combo()
-        add_field("hdr", "HDR:", self.hdr_combo)
-
-        self.star_gain_spin = QDoubleSpinBox()
-        self.star_gain_spin.setDecimals(0)
-        self.star_gain_spin.setRange(0, 100)
-        self.star_gain_spin.setValue(80)
-        self.star_gain_spin.setKeyboardTracking(False)
-        self.star_gain_spin.setEnabled(False)
-        self.star_gain_spin.setToolTip("High-gain bracket for simulated HDR (stars)")
-        self._star_gain_label = add_field("star_gain", "Star gain:", self.star_gain_spin)
-        self._set_star_gain_visible(False)
+        # Hardware HDR: a live sensor mode (applies to view, recordings and
+        # snaps). The row is shown whenever the selected camera has it, and
+        # enabled only when connected in 16-bit mode.
+        self.hdr_check = QCheckBox("HDR")
+        self.hdr_check.setEnabled(False)
+        self.hdr_check.setVisible(False)
+        self._hdr_available = False
+        self._recording = False
+        add_field("hdr", "", self.hdr_check)
 
         self.offset_spin = QDoubleSpinBox()
         self.offset_spin.setDecimals(0)
@@ -260,8 +250,8 @@ class CameraPanel(QGroupBox):
         self.gain_spin.valueChanged.connect(lambda v: self.gain_changed.emit(v))
         self.auto_gain_check.toggled.connect(self._on_auto_gain_toggled)
         self.offset_spin.valueChanged.connect(lambda v: self.offset_changed.emit(v))
-        self.hdr_combo.currentIndexChanged.connect(self._on_hdr_combo_changed)
-        self.star_gain_spin.valueChanged.connect(lambda v: self.star_gain_changed.emit(v))
+        self.hdr_check.toggled.connect(self.hdr_toggled.emit)
+        self.bit_depth_combo.currentIndexChanged.connect(lambda _i: self._update_hdr_enabled())
 
     # --- Keyboard navigation ---
 
@@ -489,46 +479,6 @@ class CameraPanel(QGroupBox):
         self.gain_spin.setEnabled(not checked)
         self.auto_gain_toggled.emit(checked)
 
-    def _on_hdr_combo_changed(self, _index: int) -> None:
-        mode = self.hdr_mode
-        self._set_star_gain_visible(mode == "simulated")
-        self.hdr_mode_changed.emit(mode)
-
-    def _populate_hdr_combo(self) -> None:
-        """Rebuild HDR choices for the current camera, keeping the selection if valid."""
-        current = self.hdr_mode
-        self.hdr_combo.blockSignals(True)
-        self.hdr_combo.clear()
-        self.hdr_combo.addItem("Off", "off")
-        if self._hdr_native_available:
-            self.hdr_combo.addItem("Hardware", "native")
-        self.hdr_combo.addItem("Simulated (snap only)", "simulated")
-        idx = self.hdr_combo.findData(current)
-        self.hdr_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.hdr_combo.blockSignals(False)
-        self.hdr_combo.setToolTip(
-            "Hardware: sensor dual-gain HDR, applies to live view, recordings and snaps.\n"
-            "Simulated: Snap captures a frame at Gain and one at Star gain, then merges them."
-            if self._hdr_native_available else
-            "This camera has no hardware HDR.\n"
-            "Simulated: Snap captures a frame at Gain and one at Star gain, then merges them."
-        )
-
-    def _set_star_gain_visible(self, visible: bool) -> None:
-        self.star_gain_spin.setVisible(visible)
-        if self._star_gain_label is not None:
-            self._star_gain_label.setVisible(visible)
-        self.star_gain_spin.setEnabled(visible and self._connected)
-
-    @property
-    def hdr_mode(self) -> str:
-        return self.hdr_combo.currentData() or "off"
-
-    def set_hdr_mode(self, mode: str) -> None:
-        """Select an HDR mode; emits hdr_mode_changed if the selection changes."""
-        idx = self.hdr_combo.findData(mode)
-        self.hdr_combo.setCurrentIndex(idx if idx >= 0 else 0)
-
     def _on_connect_btn(self) -> None:
         if self.connect_btn.text() == "Connect":
             self.connect_requested.emit()
@@ -635,9 +585,23 @@ class CameraPanel(QGroupBox):
             self.auto_gain_check.setToolTip("")
 
     def set_hdr_capability(self, native_hdr: bool) -> None:
-        """List the Hardware HDR choice only when the camera supports it."""
-        self._hdr_native_available = native_hdr
-        self._populate_hdr_combo()
+        """Show the HDR row whenever the selected camera supports it."""
+        self._hdr_available = native_hdr
+        self.hdr_check.setVisible(native_hdr)
+        self._update_hdr_enabled()
+
+    def _update_hdr_enabled(self) -> None:
+        """HDR is usable only when connected in 16-bit mode and not recording."""
+        is_16 = self.selected_bit_depth == 16
+        self.hdr_check.setEnabled(
+            self._hdr_available and self._connected and is_16 and not self._recording
+        )
+        if not is_16:
+            self.hdr_check.setToolTip("Requires 16-bit mode (select before connecting)")
+        else:
+            self.hdr_check.setToolTip(
+                "Sensor dual-gain HDR: applies to live view, recordings and snaps"
+            )
 
     def set_connected(self, connected: bool) -> None:
         self._connected = connected
@@ -662,8 +626,6 @@ class CameraPanel(QGroupBox):
         self.gain_spin.setEnabled(connected)
         self.offset_spin.setEnabled(connected)
         self.soft_auto_exposure_check.setEnabled(connected)
-        self.hdr_combo.setEnabled(connected)
-        self.star_gain_spin.setEnabled(connected and self.hdr_mode == "simulated")
         self._set_postconnect_labels_enabled(connected)
         if not connected:
             # Reset auto checkboxes when disconnecting
@@ -672,19 +634,17 @@ class CameraPanel(QGroupBox):
             self.auto_gain_check.setChecked(False)
             self.auto_gain_check.setEnabled(False)
             self.soft_auto_exposure_check.setChecked(False)
-            # HDR is reset silently so the saved mode survives a disconnect
-            # (MainWindow re-applies it on the next connect).
-            self._hdr_native_available = False
-            self._populate_hdr_combo()  # blocks its own signals
-            self.hdr_combo.blockSignals(True)
-            self.hdr_combo.setCurrentIndex(0)
-            self.hdr_combo.blockSignals(False)
-            self._set_star_gain_visible(False)
+            # HDR is cleared silently so the saved setting survives a
+            # disconnect (MainWindow re-applies it on the next connect).
+            self.hdr_check.blockSignals(True)
+            self.hdr_check.setChecked(False)
+            self.hdr_check.blockSignals(False)
+        self._update_hdr_enabled()
 
     def set_recording(self, recording: bool) -> None:
+        self._recording = recording
         self.connect_btn.setEnabled(not recording)
-        self.hdr_combo.setEnabled(not recording)
-        self.star_gain_spin.setEnabled(not recording and self.hdr_mode == "simulated")
+        self._update_hdr_enabled()
         self.bin_combo.setEnabled(not recording)
         self.landscape_radio.setEnabled(not recording)
         self.portrait_radio.setEnabled(not recording)
@@ -715,10 +675,6 @@ class CameraPanel(QGroupBox):
             self.gain_spin.setRange(prange.min_val, prange.max_val)
             self.gain_spin.setSingleStep(prange.step)
             self.gain_spin.blockSignals(False)
-            self.star_gain_spin.blockSignals(True)
-            self.star_gain_spin.setRange(prange.min_val, prange.max_val)
-            self.star_gain_spin.setSingleStep(prange.step)
-            self.star_gain_spin.blockSignals(False)
         elif param == Param.OFFSET:
             self.offset_spin.blockSignals(True)
             self.offset_spin.setRange(prange.min_val, prange.max_val)

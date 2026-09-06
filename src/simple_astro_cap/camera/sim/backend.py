@@ -17,6 +17,7 @@ _SIM_INFO = CameraInfo(
     pixel_height_um=2.9,
     max_bit_depth=16,
     is_color=False,
+    has_hdr=True,
 )
 
 
@@ -139,6 +140,9 @@ class SimCamera(CameraBase):
 
     def set_connect_roi(self, roi: ROI) -> None:
         self._pending_roi = roi
+
+    def set_connect_bit_depth(self, bits: int) -> None:
+        self._bit_depth = bits
 
     def connect(self, camera_id: str) -> None:
         if self._pending_roi is not None:

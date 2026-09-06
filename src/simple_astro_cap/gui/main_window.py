@@ -35,13 +35,12 @@ from PySide6.QtWidgets import (
 from simple_astro_cap.camera.abc import CameraBase, Frame, Param, ROI
 from simple_astro_cap.gui import shortcuts as sc
 from simple_astro_cap.gui.camera_panel import CameraPanel
-from simple_astro_cap.gui.display_bridge import BracketBridge, DisplayBridge
+from simple_astro_cap.gui.display_bridge import DisplayBridge
 from simple_astro_cap.gui.histogram import HistogramWidget
 from simple_astro_cap.gui.live_view import LiveViewWidget, compute_zoom_steps
 from simple_astro_cap.gui.recording_panel import RecordingPanel
 from simple_astro_cap.settings import AppSettings, load_settings, save_settings
 from simple_astro_cap.pipeline.auto_exposure import SoftwareAutoExposure
-from simple_astro_cap.pipeline.hdr import HdrBracketCapture, merge_hdr
 from simple_astro_cap.pipeline.simple import SimpleHarness
 from simple_astro_cap.recording.abc import RecorderBase
 from simple_astro_cap.recording.mkv_recorder import MkvRecorder
@@ -67,9 +66,6 @@ class MainWindow(QMainWindow):
         self._histogram_interval = 4  # update histogram every Nth frame
         self._last_frame: Frame | None = None
         self._soft_auto: SoftwareAutoExposure | None = None
-        self._hdr_bracket: HdrBracketCapture | None = None  # in-flight simulated HDR snap
-        self._hdr_bridge = BracketBridge()
-        self._hdr_bridge.done.connect(self._on_hdr_bracket_done)
         self._last_display_time = 0.0  # monotonic seconds, for battery saver
 
         self.setWindowTitle("Simple Astro Cap")
@@ -309,7 +305,7 @@ class MainWindow(QMainWindow):
         self._camera_panel.auto_exposure_toggled.connect(self._on_auto_exposure_toggled)
         self._camera_panel.soft_auto_exposure_toggled.connect(self._on_soft_auto_exposure_toggled)
         self._camera_panel.auto_gain_toggled.connect(self._on_auto_gain_toggled)
-        self._camera_panel.hdr_mode_changed.connect(self._on_hdr_mode_changed)
+        self._camera_panel.hdr_toggled.connect(self._on_hdr_toggled)
 
         # Recording panel
         self._recording_panel.capture_single_requested.connect(self._on_capture_single)
@@ -341,15 +337,18 @@ class MainWindow(QMainWindow):
         """
         self._status_cam.setText("Loading camera info...")
         QApplication.processEvents()
+        has_hdr = False
         try:
             if hasattr(self._camera, 'pre_open'):
                 self._camera.pre_open(camera_id)
                 info = self._camera.get_pre_open_info()
                 if info:
                     self._camera_panel.set_sensor_size(info.sensor_width, info.sensor_height)
+                    has_hdr = info.has_hdr
                     log.info("Camera %s: %dx%d", camera_id, info.sensor_width, info.sensor_height)
         except Exception as e:
             log.warning("Could not query camera info: %s", e)
+        self._camera_panel.set_hdr_capability(has_hdr)
         self._status_cam.setText("Disconnected")
 
     def _on_connect(self) -> None:
@@ -411,12 +410,16 @@ class MainWindow(QMainWindow):
             auto_gain=self._camera.supports_auto_gain(),
         )
         # HDR: re-apply the saved mode (checks are cleared on disconnect)
+        # HDR: row shown on capable cameras, usable in 16-bit; re-apply saved state
         native_hdr = self._camera.supports_hdr()
         self._camera_panel.set_hdr_capability(native_hdr)
-        saved_mode = self._settings.hdr_mode
-        if saved_mode == "native" and not native_hdr:
-            saved_mode = "off"
-        self._camera_panel.set_hdr_mode(saved_mode)  # emits hdr_mode_changed if not "off"
+        if native_hdr and bit_depth == 16 and self._settings.hdr:
+            self._camera_panel.hdr_check.setChecked(True)  # emits hdr_toggled
+        elif native_hdr:
+            try:
+                self._camera.set_hdr(False)  # don't inherit a stale sensor state
+            except Exception as e:
+                log.warning("Failed to clear HDR on connect: %s", e)
         self._status_cam.setText(f"{info.model}")
         self._status_res.setText(f"{roi.width}x{roi.height} {bit_depth}bit")
 
@@ -439,13 +442,13 @@ class MainWindow(QMainWindow):
         if self._auto_poll_timer.isActive():
             self._auto_poll_timer.stop()
         self._remove_soft_auto()
-        self._abort_hdr_bracket()
         if self._recorder is not None:
             self._finish_recording()
         if self._harness and self._harness.is_running():
             self._harness.stop()
             self._harness = None
         self._camera.disconnect()
+        self._last_frame = None  # never snap a frame from a previous session
         self._camera_panel.set_connected(False)
         self._recording_panel.setEnabled(False)
         self._lens_group.setEnabled(False)
@@ -517,6 +520,10 @@ class MainWindow(QMainWindow):
         return np.clip(adjusted, 0, max_val).astype(data.dtype)
 
     def _on_display_frame(self, frame: Frame) -> None:
+        # Frames queued by a previous session's worker can arrive after a
+        # reconnect; drop anything that doesn't match the connected camera.
+        if not self._camera.is_connected() or frame.bit_depth != self._camera.get_bit_depth():
+            return
         if frame.sequence == 1:
             log.info("First frame displayed: %dx%d %dbit min=%d max=%d",
                      frame.width, frame.height, frame.bit_depth,
@@ -714,45 +721,26 @@ class MainWindow(QMainWindow):
 
     # --- HDR ---
 
-    def _on_hdr_mode_changed(self, mode: str) -> None:
-        previous = self._settings.hdr_mode
-        self._settings.hdr_mode = mode
-        if mode != "simulated":
-            self._abort_hdr_bracket()
-        want_native = mode == "native"
-        if not self._apply_native_hdr(want_native):
-            # Camera refused: revert the combo without re-entering this handler
-            self._settings.hdr_mode = previous
-            self._camera_panel.hdr_combo.blockSignals(True)
-            self._camera_panel.set_hdr_mode(previous)
-            self._camera_panel.hdr_combo.blockSignals(False)
-            want_native = previous == "native"
-        self._status_hdr.setText("HDR" if want_native and self._camera.is_connected() else "")
-
-    def _apply_native_hdr(self, enabled: bool) -> bool:
-        """Set native HDR with live stopped, like a bin change. Returns success."""
+    def _on_hdr_toggled(self, enabled: bool) -> None:
+        """Hardware HDR: set with live stopped, like a bin change."""
         if not self._camera.is_connected() or not self._camera.supports_hdr():
-            return True
+            return
         was_running = self._harness and self._harness.is_running()
         if was_running:
             self._harness.stop()
-        ok = True
         try:
             self._camera.set_hdr(enabled)
+            self._settings.hdr = enabled
         except Exception as e:
-            log.warning("Failed to set native HDR: %s", e)
+            log.warning("Failed to set HDR: %s", e)
             self._status_rec.setText(f"HDR error: {e}")
-            ok = False
+            enabled = not enabled
+            self._camera_panel.hdr_check.blockSignals(True)
+            self._camera_panel.hdr_check.setChecked(enabled)
+            self._camera_panel.hdr_check.blockSignals(False)
         if was_running:
             self._harness.start()
-        return ok
-
-    def _abort_hdr_bracket(self) -> None:
-        if self._hdr_bracket is not None:
-            if self._harness:
-                self._harness.remove_consumer(self._hdr_bracket)
-            self._hdr_bracket = None
-            self._recording_panel.snap_btn.setEnabled(True)
+        self._status_hdr.setText("HDR" if enabled else "")
 
     def _on_orientation_changed(self, portrait: bool) -> None:
         self._portrait = portrait
@@ -803,64 +791,13 @@ class MainWindow(QMainWindow):
     def _on_capture_single(self) -> None:
         if not self._camera.is_connected() or self._last_frame is None:
             return
-        if self._hdr_bracket is not None:
-            return  # bracket already in progress
-
-        if self._camera_panel.hdr_mode == "simulated":
-            if self._recorder is not None and self._recorder.is_recording():
-                self._status_rec.setText("HDR snap unavailable while recording (gain would change)")
-                return
-            if not self._harness or not self._harness.is_running():
-                return
-            planet_gain = self._camera_panel.gain_spin.value()
-            star_gain = self._camera_panel.star_gain_spin.value()
-            self._hdr_bracket = HdrBracketCapture(
-                self._camera, planet_gain, star_gain, self._hdr_bridge.on_done
-            )
-            self._recording_panel.snap_btn.setEnabled(False)
-            self._status_rec.setText(f"HDR bracket: gain {planet_gain:.0f} → {star_gain:.0f}…")
-            self._harness.add_consumer(self._hdr_bracket)
-            return
-
         frame = self._last_frame
         extra = {"Gain": f"{self._camera.get_gain():.0f}"}
-        if self._camera_panel.hdr_mode == "native":
+        if self._camera_panel.hdr_check.isChecked():
             extra["Hdr"] = "hardware"
         stem = self._next_snap_stem()
         filename = self._save_snapshot(frame, stem, "", extra)
         self._status_rec.setText(f"Snap saved: {filename}")
-
-    def _on_hdr_bracket_done(self, low: Frame | None, high: Frame | None, error: str) -> None:
-        """GUI-thread completion of a simulated HDR snap: write lo/hi/hdr files."""
-        self._abort_hdr_bracket()  # detaches the consumer, re-enables Snap
-        if error or low is None or high is None:
-            self._status_rec.setText(f"HDR snap failed: {error or 'no frames'}")
-            return
-        if low.data.shape != high.data.shape:
-            self._status_rec.setText("HDR snap failed: bracket frames differ in size")
-            return
-
-        max_val = 255 if low.bit_depth <= 8 else 65535
-        merged, k, b = merge_hdr(low.data, high.data, max_val)
-        merged_frame = Frame(
-            data=merged, width=high.width, height=high.height, bit_depth=16,
-            timestamp_ns=high.timestamp_ns, sequence=high.sequence,
-        )
-        planet_gain = self._camera_panel.gain_spin.value()
-        star_gain = self._camera_panel.star_gain_spin.value()
-        fit = {"HdrK": f"{k:.4f}", "HdrB": f"{b:.2f}"}
-
-        stem = self._next_snap_stem()
-        self._save_snapshot(low, stem, "-lo",
-                            {"Gain": f"{planet_gain:.0f}", "HdrRole": "low"})
-        self._save_snapshot(high, stem, "-hi",
-                            {"Gain": f"{star_gain:.0f}", "HdrRole": "high"})
-        filename = self._save_snapshot(
-            merged_frame, stem, "-hdr",
-            {"Gain": f"{planet_gain:.0f}", "HdrRole": "merged",
-             "HdrStarGain": f"{star_gain:.0f}", **fit},
-        )
-        self._status_rec.setText(f"HDR snap saved: {filename} (k={k:.2f})")
 
     def _next_snap_stem(self) -> str:
         """Allocate the next snapshot sequence number and return the file stem."""
@@ -988,7 +925,7 @@ class MainWindow(QMainWindow):
             sequence=seq,
             start_exposure_us=self._camera_panel.get_exposure_us(),
             start_gain=self._camera_panel.gain_spin.value(),
-            hdr=self._camera_panel.hdr_mode == "native",
+            hdr=self._camera_panel.hdr_check.isChecked(),
             bit_depth=bit_depth,
             width=frame_w,
             height=frame_h,
@@ -1140,11 +1077,6 @@ class MainWindow(QMainWindow):
         self._camera_panel.offset_spin.setValue(s.offset)
         self._camera_panel.offset_spin.blockSignals(False)
 
-        # HDR: star gain now; hdr_mode is applied on connect (checks need a camera)
-        self._camera_panel.star_gain_spin.blockSignals(True)
-        self._camera_panel.star_gain_spin.setValue(s.star_gain)
-        self._camera_panel.star_gain_spin.blockSignals(False)
-
         # Bit depth
         idx = self._camera_panel.bit_depth_combo.findText(str(s.bit_depth))
         if idx >= 0:
@@ -1185,8 +1117,7 @@ class MainWindow(QMainWindow):
             sidebar_width=self._splitter.sizes()[1] if len(self._splitter.sizes()) > 1 else 250,
             snap_sequence=self._settings.snap_sequence,
             session_sequence=self._settings.session_sequence,
-            hdr_mode=self._settings.hdr_mode,
-            star_gain=self._camera_panel.star_gain_spin.value(),
+            hdr=self._settings.hdr,
         )
 
     # --- Cleanup ---

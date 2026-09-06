@@ -147,6 +147,7 @@ class QhyCamera(CameraBase):
             max_bit_depth=bpp,
             is_color=is_color,
             bayer_pattern="RGGB" if is_color else "",
+            has_hdr=sdk.is_control_available(self._pre_open_handle, ControlId.CONTROL_HDR),
         )
 
     def get_pre_open_info(self) -> CameraInfo | None:
@@ -195,6 +196,7 @@ class QhyCamera(CameraBase):
             max_bit_depth=16 if sdk.is_control_available(self._handle, ControlId.CAM_16BITS) else 8,
             is_color=is_color,
             bayer_pattern="RGGB" if is_color else "",
+            has_hdr=sdk.is_control_available(self._handle, ControlId.CONTROL_HDR),
         )
 
         # Allocate frame buffer
@@ -366,8 +368,7 @@ class QhyCamera(CameraBase):
 
     def supports_hdr(self) -> bool:
         self._require_connected()
-        sdk = self._get_sdk()
-        return sdk.is_control_available(self._handle, ControlId.CONTROL_HDR)
+        return self._info.has_hdr  # type: ignore[union-attr]
 
     def set_hdr(self, enabled: bool) -> None:
         self._require_connected()

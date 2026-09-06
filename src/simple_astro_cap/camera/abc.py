@@ -35,6 +35,7 @@ class CameraInfo:
     max_bit_depth: int
     is_color: bool
     bayer_pattern: str = ""  # "" for mono; "RGGB", "BGGR", "GRBG", "GBRG" for color
+    has_hdr: bool = False  # native sensor HDR mode available (16-bit only)
 
 
 @dataclass(frozen=True)
