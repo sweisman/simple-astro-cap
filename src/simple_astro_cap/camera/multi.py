@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from .abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
 
@@ -20,6 +21,11 @@ class MultiCamera(CameraBase):
         self._backends: list[CameraBase] = []
         self._camera_map: dict[str, CameraBase] = {}  # camera_id -> backend
         self._active: CameraBase | None = None
+        # Vendor SDKs are called from both the GUI thread (params) and the
+        # harness worker (frames); ctypes releases the GIL, so serialize them.
+        self._lock = threading.RLock()
+        # Pure-state getters (is_connected, get_roi, ...) stay unlocked so the
+        # GUI never blocks behind the worker's frame wait.
 
         # Try to load each backend; skip unavailable ones
         self._try_add_backend("QHY", self._make_qhy)
@@ -83,6 +89,15 @@ class MultiCamera(CameraBase):
 
     def pre_open(self, camera_id: str) -> None:
         backend = self._get_backend(camera_id)
+        # Release a handle pre-opened on a different backend so the device
+        # isn't left claimed. (Same-backend switches are handled inside the
+        # backend's own pre_open; QHY deliberately keeps its handle.)
+        old = self._active
+        if old is not None and old is not backend and not old.is_connected():
+            try:
+                old.disconnect()
+            except Exception:
+                log.debug("Releasing previous pre-open handle failed", exc_info=True)
         if hasattr(backend, 'pre_open'):
             backend.pre_open(camera_id)
         self._active = backend
@@ -108,9 +123,10 @@ class MultiCamera(CameraBase):
         self._active = backend
 
     def disconnect(self) -> None:
-        if self._active:
-            self._active.disconnect()
-            self._active = None
+        with self._lock:
+            if self._active:
+                self._active.disconnect()
+                self._active = None
 
     def is_connected(self) -> bool:
         return self._active is not None and self._active.is_connected()
@@ -119,13 +135,16 @@ class MultiCamera(CameraBase):
         return self._active.get_info()
 
     def get_param_range(self, param: Param) -> ParamRange | None:
-        return self._active.get_param_range(param)
+        with self._lock:
+            return self._active.get_param_range(param)
 
     def get_supported_bin_modes(self) -> list[int]:
-        return self._active.get_supported_bin_modes()
+        with self._lock:
+            return self._active.get_supported_bin_modes()
 
     def get_supported_bit_depths(self) -> list[int]:
-        return self._active.get_supported_bit_depths()
+        with self._lock:
+            return self._active.get_supported_bit_depths()
 
     def supports_auto_exposure(self) -> bool:
         return self._active.supports_auto_exposure() if self._active else False
@@ -137,76 +156,96 @@ class MultiCamera(CameraBase):
         return self._active.auto_exposure_gain_coupled() if self._active else False
 
     def set_auto_exposure(self, enabled: bool) -> None:
-        self._active.set_auto_exposure(enabled)
+        with self._lock:
+            self._active.set_auto_exposure(enabled)
 
     def set_auto_gain(self, enabled: bool) -> None:
-        self._active.set_auto_gain(enabled)
+        with self._lock:
+            self._active.set_auto_gain(enabled)
 
     def get_auto_exposure(self) -> bool:
-        return self._active.get_auto_exposure() if self._active else False
+        with self._lock:
+            return self._active.get_auto_exposure() if self._active else False
 
     def get_auto_gain(self) -> bool:
-        return self._active.get_auto_gain() if self._active else False
+        with self._lock:
+            return self._active.get_auto_gain() if self._active else False
 
     def get_sensor_temperature(self) -> float | None:
-        return self._active.get_sensor_temperature() if self._active else None
+        with self._lock:
+            return self._active.get_sensor_temperature() if self._active else None
 
     def supports_hdr(self) -> bool:
         return self._active.supports_hdr() if self._active else False
 
     def set_hdr(self, enabled: bool) -> None:
-        self._active.set_hdr(enabled)
+        with self._lock:
+            self._active.set_hdr(enabled)
 
     def get_hdr(self) -> bool:
-        return self._active.get_hdr() if self._active else False
+        with self._lock:
+            return self._active.get_hdr() if self._active else False
 
     def set_exposure(self, microseconds: float) -> None:
-        self._active.set_exposure(microseconds)
+        with self._lock:
+            self._active.set_exposure(microseconds)
 
     def get_exposure(self) -> float:
-        return self._active.get_exposure()
+        with self._lock:
+            return self._active.get_exposure()
 
     def set_gain(self, value: float) -> None:
-        self._active.set_gain(value)
+        with self._lock:
+            self._active.set_gain(value)
 
     def get_gain(self) -> float:
-        return self._active.get_gain()
+        with self._lock:
+            return self._active.get_gain()
 
     def set_bin_mode(self, bin_factor: int) -> None:
-        self._active.set_bin_mode(bin_factor)
+        with self._lock:
+            self._active.set_bin_mode(bin_factor)
 
     def get_bin_mode(self) -> int:
         return self._active.get_bin_mode()
 
     def set_roi(self, roi: ROI) -> None:
-        self._active.set_roi(roi)
+        with self._lock:
+            self._active.set_roi(roi)
 
     def get_roi(self) -> ROI:
         return self._active.get_roi()
 
     def set_bit_depth(self, bit_depth: int) -> None:
-        self._active.set_bit_depth(bit_depth)
+        with self._lock:
+            self._active.set_bit_depth(bit_depth)
 
     def get_bit_depth(self) -> int:
         return self._active.get_bit_depth()
 
     def set_param(self, param: Param, value: float) -> None:
-        self._active.set_param(param, value)
+        with self._lock:
+            self._active.set_param(param, value)
 
     def get_param(self, param: Param) -> float:
-        return self._active.get_param(param)
+        with self._lock:
+            return self._active.get_param(param)
 
     def capture_single(self) -> Frame:
-        return self._active.capture_single()
+        with self._lock:
+            return self._active.capture_single()
 
     def start_live(self) -> None:
-        self._active.start_live()
+        with self._lock:
+            self._active.start_live()
 
     def stop_live(self) -> None:
-        self._active.stop_live()
+        with self._lock:
+            self._active.stop_live()
 
     def get_live_frame(self, timeout_ms: int = 1000) -> Frame | None:
-        return self._active.get_live_frame(timeout_ms=timeout_ms)
+        with self._lock:
+            return self._active.get_live_frame(timeout_ms=timeout_ms)
 
     def is_live(self) -> bool:
         return self._active is not None and self._active.is_live()

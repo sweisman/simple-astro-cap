@@ -207,7 +207,9 @@ class SimCamera(CameraBase):
         self._roi = roi
 
     def get_roi(self) -> ROI:
-        return self._roi
+        # Like the hardware backends, report the binned output size
+        return ROI(self._roi.x, self._roi.y,
+                   self._roi.width // self._bin, self._roi.height // self._bin)
 
     def set_bit_depth(self, bits: int) -> None:
         self._bit_depth = bits

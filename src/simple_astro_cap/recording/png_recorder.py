@@ -52,9 +52,10 @@ class PngRecorder(RecorderBase):
         log.info("PNG recording started: %s", path)
 
     def stop(self) -> None:
-        if self._recording:
-            log.info("PNG recording stopped: %d frames written", self._count)
-        self._recording = False
+        with self._lock:
+            if self._recording:
+                log.info("PNG recording stopped: %d frames written", self._count)
+            self._recording = False
 
     @property
     def end_sequence(self) -> int:
@@ -70,7 +71,7 @@ class PngRecorder(RecorderBase):
         if frame.bit_depth <= 8:
             img = Image.fromarray(frame.data, mode="L")
         else:
-            img = Image.fromarray(frame.data.astype(np.uint16), mode="I;16")
+            img = Image.fromarray(frame.data, mode="I;16")  # already uint16
 
         meta = PngInfo()
         meta.add_text("Software", "Simple Astro Cap")

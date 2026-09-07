@@ -15,51 +15,40 @@ from .constants import POABool, POAConfig, POAErrors, POAImgFormat, POAValueType
 
 log = logging.getLogger(__name__)
 
-# Max supported bins array length in POACameraProperties
-_MAX_BINS = 16
+# Array lengths in POACameraProperties (PlayerOneCamera.h, SDK >= 3.3.0)
+_MAX_BINS = 8
 _MAX_FORMATS = 8
 
 
 class POACameraProperties(ctypes.Structure):
-    """POACameraProperties — camera info returned by POAGetCameraProperties."""
+    """POACameraProperties — transcribed from PlayerOneCamera.h.
+
+    Field order and sizes must match the vendor header exactly: the SDK
+    memcpy's its own struct into this buffer, so a short or reordered
+    layout corrupts the heap and garbles every field after the first.
+    """
 
     _fields_ = [
-        ("cameraModelName", ctypes.c_char * 64),
+        ("cameraModelName", ctypes.c_char * 256),
         ("userCustomID", ctypes.c_char * 16),
         ("cameraID", ctypes.c_int),
         ("maxWidth", ctypes.c_int),
         ("maxHeight", ctypes.c_int),
         ("bitDepth", ctypes.c_int),
         ("isColorCamera", ctypes.c_int),  # POABool
-        ("isHasCooler", ctypes.c_int),  # POABool
-        ("isHasUSBHub", ctypes.c_int),  # POABool
         ("isHasST4Port", ctypes.c_int),  # POABool
-        ("isHasMechanicalShutter", ctypes.c_int),  # POABool
+        ("isHasCooler", ctypes.c_int),  # POABool
+        ("isUSB3Speed", ctypes.c_int),  # POABool
+        ("bayerPattern", ctypes.c_int),  # POABayerPattern
         ("pixelSize", ctypes.c_double),
         ("SN", ctypes.c_char * 64),
         ("sensorModelName", ctypes.c_char * 32),
-        ("bayerPattern", ctypes.c_int),
         ("localPath", ctypes.c_char * 256),
         ("bins", ctypes.c_int * _MAX_BINS),
         ("imgFormats", ctypes.c_int * _MAX_FORMATS),
+        ("isSupportHardBin", ctypes.c_int),  # POABool
         ("pID", ctypes.c_int),
-    ]
-
-
-class POAConfigAttributes(ctypes.Structure):
-    """POAConfigAttributes — control/config info."""
-
-    _fields_ = [
-        ("isSupportAuto", ctypes.c_int),  # POABool
-        ("isWritable", ctypes.c_int),  # POABool
-        ("isReadable", ctypes.c_int),  # POABool
-        ("configID", ctypes.c_int),  # POAConfig
-        ("valueType", ctypes.c_int),  # POAValueType
-        ("maxValue_int", ctypes.c_long),
-        ("minValue_int", ctypes.c_long),
-        ("defaultValue_int", ctypes.c_long),
-        ("szConfName", ctypes.c_char * 64),
-        ("szDescription", ctypes.c_char * 128),
+        ("reserved", ctypes.c_char * 248),
     ]
 
 
@@ -69,8 +58,39 @@ class POAConfigValue(ctypes.Union):
     _fields_ = [
         ("intValue", ctypes.c_long),
         ("floatValue", ctypes.c_double),
-        ("boolValue", ctypes.c_int),
+        ("boolValue", ctypes.c_int),  # POABool
     ]
+
+
+class POAConfigAttributes(ctypes.Structure):
+    """POAConfigAttributes — transcribed from PlayerOneCamera.h."""
+
+    _fields_ = [
+        ("isSupportAuto", ctypes.c_int),  # POABool
+        ("isWritable", ctypes.c_int),  # POABool
+        ("isReadable", ctypes.c_int),  # POABool
+        ("configID", ctypes.c_int),  # POAConfig
+        ("valueType", ctypes.c_int),  # POAValueType
+        ("maxValue", POAConfigValue),
+        ("minValue", POAConfigValue),
+        ("defaultValue", POAConfigValue),
+        ("szConfName", ctypes.c_char * 64),
+        ("szDescription", ctypes.c_char * 128),
+        ("reserved", ctypes.c_char * 64),
+    ]
+
+    # Convenience accessors used by the backend
+    @property
+    def maxValue_int(self) -> int:
+        return self.maxValue.intValue
+
+    @property
+    def minValue_int(self) -> int:
+        return self.minValue.intValue
+
+    @property
+    def defaultValue_int(self) -> int:
+        return self.defaultValue.intValue
 
 
 class PlayerOneError(Exception):

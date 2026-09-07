@@ -85,6 +85,14 @@ class AsiCamera(CameraBase):
         """Open camera to query info; keep open for connect() to reuse."""
         sdk = self._get_sdk()
         asi_id = self._parse_asi_id(camera_id)
+        if self._camera_id is not None and not self._connected:
+            if self._camera_id == asi_id:
+                return  # already pre-opened
+            try:
+                sdk.close_camera(self._camera_id)  # release the previously probed camera
+            except AsiError:
+                pass
+            self._camera_id = None
         sdk.open_camera(asi_id)
         prop = self._find_prop(camera_id)
         self._camera_id = asi_id
@@ -316,21 +324,14 @@ class AsiCamera(CameraBase):
     def set_bin_mode(self, bin_factor: int) -> None:
         """Set binning. Caller must stop live streaming first."""
         self._require_connected()
-        sdk = self._get_sdk()
-        self._bin_mode = bin_factor
         # Recalculate ROI from full sensor
         if self._info:
             w = self._info.sensor_width // bin_factor
             h = self._info.sensor_height // bin_factor
-            self._roi = ROI(0, 0, w, h)
-        img_type = ImgType.RAW16 if self._bit_depth == 16 else ImgType.RAW8
-        sdk.set_roi_format(self._camera_id, self._roi.width, self._roi.height,
-                           bin_factor, img_type)
-        sdk.set_start_pos(self._camera_id, 0, 0)
-        # Reallocate buffer
-        bpp = 2 if self._bit_depth == 16 else 1
-        buf_size = self._roi.width * self._roi.height * bpp
-        self._frame_buf = (ctypes.c_uint8 * buf_size)()
+            roi = ROI(0, 0, w, h)
+        else:
+            roi = self._roi
+        self._apply_roi_format(roi, bin_factor)
         log.info("Bin %dx%d: resolution %dx%d", bin_factor, bin_factor,
                  self._roi.width, self._roi.height)
 
@@ -339,12 +340,22 @@ class AsiCamera(CameraBase):
 
     def set_roi(self, roi: ROI) -> None:
         self._require_connected()
+        self._apply_roi_format(roi, self._bin_mode)
+
+    def _apply_roi_format(self, roi: ROI, bin_factor: int) -> None:
+        """Push ROI/bin to the SDK, then commit state and resize the buffer.
+
+        State is only updated after the SDK accepts the change, so a failed
+        call can't leave a buffer that no longer matches the sensor output.
+        """
         sdk = self._get_sdk()
-        self._roi = roi
         img_type = ImgType.RAW16 if self._bit_depth == 16 else ImgType.RAW8
-        sdk.set_roi_format(self._camera_id, roi.width, roi.height,
-                           self._bin_mode, img_type)
+        sdk.set_roi_format(self._camera_id, roi.width, roi.height, bin_factor, img_type)
         sdk.set_start_pos(self._camera_id, roi.x, roi.y)
+        self._roi = roi
+        self._bin_mode = bin_factor
+        bpp = 2 if self._bit_depth == 16 else 1
+        self._frame_buf = (ctypes.c_uint8 * (roi.width * roi.height * bpp))()
 
     def get_roi(self) -> ROI:
         self._require_connected()
@@ -409,7 +420,13 @@ class AsiCamera(CameraBase):
         sdk = self._get_sdk()
         bpp = 2 if self._bit_depth == 16 else 1
         buf_size = self._roi.width * self._roi.height * bpp
-        ok = sdk.get_video_data(self._camera_id, self._frame_buf, buf_size, timeout_ms)
+        try:
+            ok = sdk.get_video_data(self._camera_id, self._frame_buf, buf_size, timeout_ms)
+        except AsiError as e:
+            # e.g. camera unplugged: don't let the harness thread die silently
+            log.warning("ASIGetVideoData failed: %s", e)
+            time.sleep(0.1)
+            return None
         if not ok:
             return None
         return self._make_frame(self._roi.width, self._roi.height, self._bit_depth)

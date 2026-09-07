@@ -198,6 +198,8 @@ class CameraPanel(QGroupBox):
         self.hdr_check.setVisible(False)
         self._hdr_available = False
         self._recording = False
+        self._auto_exposure_supported = False
+        self._auto_gain_supported = False
         add_field("hdr", "", self.hdr_check)
 
         self.offset_spin = QDoubleSpinBox()
@@ -250,8 +252,10 @@ class CameraPanel(QGroupBox):
         self.gain_spin.valueChanged.connect(lambda v: self.gain_changed.emit(v))
         self.auto_gain_check.toggled.connect(self._on_auto_gain_toggled)
         self.offset_spin.valueChanged.connect(lambda v: self.offset_changed.emit(v))
-        self.hdr_check.toggled.connect(self.hdr_toggled.emit)
-        self.bit_depth_combo.currentIndexChanged.connect(lambda _i: self._update_hdr_enabled())
+        self.hdr_check.toggled.connect(self._on_hdr_toggled)
+        for sig in (self.bit_depth_combo.currentIndexChanged, self.bin_combo.currentIndexChanged,
+                    self.auto_exposure_check.toggled, self.auto_gain_check.toggled):
+            sig.connect(lambda _v: self._update_hdr_enabled())
 
     # --- Keyboard navigation ---
 
@@ -479,6 +483,32 @@ class CameraPanel(QGroupBox):
         self.gain_spin.setEnabled(not checked)
         self.auto_gain_toggled.emit(checked)
 
+    def _on_hdr_toggled(self, checked: bool) -> None:
+        if checked:
+            # HDR is a dual-gain readout: hardware auto gain/exposure would
+            # fight it, and binning is a different readout mode.
+            self.auto_exposure_check.setChecked(False)
+            self.auto_gain_check.setChecked(False)
+        self._apply_hdr_locks()
+        self.hdr_toggled.emit(checked)
+
+    def _apply_hdr_locks(self) -> None:
+        """Disable options that conflict with HDR while it is on."""
+        hdr_on = self.hdr_check.isChecked()
+        usable = self._connected and not self._recording
+        self.bin_combo.setEnabled(usable and not hdr_on)
+        self.auto_exposure_check.setEnabled(self._auto_exposure_supported and not hdr_on)
+        self.auto_gain_check.setEnabled(self._auto_gain_supported and not hdr_on)
+        if hdr_on:
+            for w in (self.bin_combo, self.auto_exposure_check, self.auto_gain_check):
+                w.setToolTip("Disabled while HDR is on")
+        else:
+            self.bin_combo.setToolTip("")
+            self.auto_exposure_check.setToolTip(
+                "" if self._auto_exposure_supported else "Not supported by this camera")
+            self.auto_gain_check.setToolTip(
+                "" if self._auto_gain_supported else "Not supported by this camera")
+
     def _on_connect_btn(self) -> None:
         if self.connect_btn.text() == "Connect":
             self.connect_requested.emit()
@@ -571,6 +601,8 @@ class CameraPanel(QGroupBox):
         self, auto_exposure: bool, auto_gain: bool,
     ) -> None:
         """Enable/disable auto checkboxes based on camera capabilities."""
+        self._auto_exposure_supported = auto_exposure
+        self._auto_gain_supported = auto_gain
         self.auto_exposure_check.setEnabled(auto_exposure)
         self.auto_gain_check.setEnabled(auto_gain)
         if not auto_exposure:
@@ -583,6 +615,7 @@ class CameraPanel(QGroupBox):
             self.auto_gain_check.setToolTip("Not supported by this camera")
         else:
             self.auto_gain_check.setToolTip("")
+        self._apply_hdr_locks()  # keep autos disabled if HDR is already on
 
     def set_hdr_capability(self, native_hdr: bool) -> None:
         """Show the HDR row whenever the selected camera supports it."""
@@ -591,13 +624,20 @@ class CameraPanel(QGroupBox):
         self._update_hdr_enabled()
 
     def _update_hdr_enabled(self) -> None:
-        """HDR is usable only when connected in 16-bit mode and not recording."""
+        """HDR needs 16-bit, 1x1 binning, no hardware auto-exposure/gain, not recording."""
         is_16 = self.selected_bit_depth == 16
+        unbinned = self.bin_combo.currentData() in (None, 1)
+        no_auto = not (self.auto_exposure_check.isChecked() or self.auto_gain_check.isChecked())
         self.hdr_check.setEnabled(
-            self._hdr_available and self._connected and is_16 and not self._recording
+            self._hdr_available and self._connected and is_16 and unbinned
+            and no_auto and not self._recording
         )
         if not is_16:
             self.hdr_check.setToolTip("Requires 16-bit mode (select before connecting)")
+        elif not unbinned:
+            self.hdr_check.setToolTip("Requires 1x1 binning")
+        elif not no_auto:
+            self.hdr_check.setToolTip("Turn off hardware auto-exposure/auto-gain first")
         else:
             self.hdr_check.setToolTip(
                 "Sensor dual-gain HDR: applies to live view, recordings and snaps"
@@ -633,6 +673,8 @@ class CameraPanel(QGroupBox):
             self.auto_exposure_check.setEnabled(False)
             self.auto_gain_check.setChecked(False)
             self.auto_gain_check.setEnabled(False)
+            self._auto_exposure_supported = False
+            self._auto_gain_supported = False
             self.soft_auto_exposure_check.setChecked(False)
             # HDR is cleared silently so the saved setting survives a
             # disconnect (MainWindow re-applies it on the next connect).
@@ -648,6 +690,7 @@ class CameraPanel(QGroupBox):
         self.bin_combo.setEnabled(not recording)
         self.landscape_radio.setEnabled(not recording)
         self.portrait_radio.setEnabled(not recording)
+        self._apply_hdr_locks()
 
     def set_bin_modes(self, modes: list[int], sensor_w: int = 0, sensor_h: int = 0) -> None:
         self.bin_combo.blockSignals(True)

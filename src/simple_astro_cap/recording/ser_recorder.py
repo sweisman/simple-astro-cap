@@ -15,6 +15,8 @@ import struct
 import time
 from pathlib import Path
 
+import numpy as np
+
 from simple_astro_cap.camera.abc import Frame
 
 from .abc import RecorderBase
@@ -33,18 +35,23 @@ _BAYER_COLOR_ID = {
     "GBRG": 17,
 }
 
-# Windows FILETIME epoch offset: 100-nanosecond intervals from 1601-01-01 to 1970-01-01
-_EPOCH_OFFSET = 116444736000000000
+# SER timestamps are .NET DateTime ticks: 100-nanosecond intervals since
+# 0001-01-01 00:00:00. Offset from the Unix epoch (1970-01-01).
+_EPOCH_OFFSET = 621355968000000000
 
 
-def _unix_to_filetime(unix_ns: int) -> int:
-    """Convert Unix nanoseconds to Windows FILETIME (100ns ticks since 1601)."""
-    unix_100ns = unix_ns // 100
-    return unix_100ns + _EPOCH_OFFSET
+def _unix_to_ticks(unix_ns: int) -> int:
+    """Convert Unix nanoseconds to .NET ticks (100ns since 0001-01-01)."""
+    return unix_ns // 100 + _EPOCH_OFFSET
 
 
-def _now_filetime() -> int:
-    return _unix_to_filetime(int(time.time() * 1_000_000_000))
+def _now_ticks_utc() -> int:
+    return _unix_to_ticks(time.time_ns())
+
+
+def _now_ticks_local() -> int:
+    """UTC ticks shifted by the current local UTC offset (SER DateTime field)."""
+    return _now_ticks_utc() + time.localtime().tm_gmtoff * 10_000_000
 
 
 class SerRecorder(RecorderBase):
@@ -87,7 +94,6 @@ class SerRecorder(RecorderBase):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(path, "wb")
 
-        now = _now_filetime()
         color_id = _BAYER_COLOR_ID.get(bayer_pattern, _COLOR_MONO)
         header = self._pack_header(
             width=width,
@@ -95,8 +101,8 @@ class SerRecorder(RecorderBase):
             bit_depth=bit_depth,
             color_id=color_id,
             frame_count=0,  # patched on stop
-            datetime_local=now,
-            datetime_utc=now,
+            datetime_local=_now_ticks_local(),
+            datetime_utc=_now_ticks_utc(),
         )
         self._file.write(header)
 
@@ -108,25 +114,25 @@ class SerRecorder(RecorderBase):
         log.info("SER recording started: %s (%dx%d %d-bit)", path, width, height, bit_depth)
 
     def stop(self) -> None:
-        if not self._recording:
-            return
-        self._recording = False
-        if self._file is not None:
-            # Write timestamp trailer
-            for ts in self._timestamps:
-                self._file.write(struct.pack("<q", ts))
-            # Patch frame count at offset 38
-            self._file.seek(38)
-            self._file.write(struct.pack("<I", self._count))
-            self._file.close()
-            self._file = None
+        with self._lock:  # never interleave with a frame write on the worker
+            if not self._recording:
+                return
+            self._recording = False
+            if self._file is not None:
+                # Write timestamp trailer
+                self._file.write(struct.pack(f"<{len(self._timestamps)}q", *self._timestamps))
+                # Patch frame count at offset 38
+                self._file.seek(38)
+                self._file.write(struct.pack("<I", self._count))
+                self._file.close()
+                self._file = None
         log.info("SER recording stopped: %d frames", self._count)
 
     def _write_frame(self, frame: Frame) -> None:
         if self._file is None:
             return
-        self._file.write(frame.data.tobytes())
-        self._timestamps.append(_now_filetime())
+        self._file.write(memoryview(np.ascontiguousarray(frame.data)))  # no 24 MB copy
+        self._timestamps.append(_now_ticks_utc())
 
     def _pack_header(
         self,

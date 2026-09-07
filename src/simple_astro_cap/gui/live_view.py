@@ -139,11 +139,9 @@ class LiveViewWidget(QScrollArea):
         data = frame.data
 
         if frame.bit_depth > 8:
-            mn, mx = int(data.min()), int(data.max())
-            if mx > mn:
-                data = ((data.astype(np.float32) - mn) / (mx - mn) * 255).astype(np.uint8)
-            else:
-                data = np.zeros_like(data, dtype=np.uint8)
+            # Fixed linear mapping (top 8 bits). A per-frame min/max stretch
+            # would cancel the brightness/contrast controls and flicker.
+            data = (data >> 8).astype(np.uint8)
 
         h, w = data.shape
         data = np.ascontiguousarray(data)

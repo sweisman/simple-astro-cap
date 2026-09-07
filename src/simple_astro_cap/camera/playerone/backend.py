@@ -78,6 +78,14 @@ class PlayerOneCamera(CameraBase):
     def pre_open(self, camera_id: str) -> None:
         sdk = self._get_sdk()
         poa_id = self._parse_poa_id(camera_id)
+        if self._camera_id is not None and not self._connected:
+            if self._camera_id == poa_id:
+                return  # already pre-opened
+            try:
+                sdk.close_camera(self._camera_id)  # release the previously probed camera
+            except PlayerOneError:
+                pass
+            self._camera_id = None
         sdk.open_camera(poa_id)
         prop = self._find_prop(camera_id)
         self._camera_id = poa_id
@@ -297,18 +305,15 @@ class PlayerOneCamera(CameraBase):
     def set_bin_mode(self, bin_factor: int) -> None:
         self._require_connected()
         sdk = self._get_sdk()
-        self._bin_mode = bin_factor
         sdk.set_image_bin(self._camera_id, bin_factor)
         if self._info:
             w = self._info.sensor_width // bin_factor
             h = self._info.sensor_height // bin_factor
-            self._roi = ROI(0, 0, w, h)
-        sdk.set_image_size(self._camera_id, self._roi.width, self._roi.height)
-        sdk.set_image_start_pos(self._camera_id, 0, 0)
-        # Reallocate buffer
-        bpp = 2 if self._bit_depth == 16 else 1
-        buf_size = self._roi.width * self._roi.height * bpp
-        self._frame_buf = (ctypes.c_uint8 * buf_size)()
+            roi = ROI(0, 0, w, h)
+        else:
+            roi = self._roi
+        self._apply_roi(roi)
+        self._bin_mode = bin_factor
         log.info("Bin %dx%d: resolution %dx%d", bin_factor, bin_factor,
                  self._roi.width, self._roi.height)
 
@@ -317,10 +322,16 @@ class PlayerOneCamera(CameraBase):
 
     def set_roi(self, roi: ROI) -> None:
         self._require_connected()
+        self._apply_roi(roi)
+
+    def _apply_roi(self, roi: ROI) -> None:
+        """Push ROI to the SDK, then commit state and resize the buffer."""
         sdk = self._get_sdk()
-        self._roi = roi
         sdk.set_image_size(self._camera_id, roi.width, roi.height)
         sdk.set_image_start_pos(self._camera_id, roi.x, roi.y)
+        self._roi = roi
+        bpp = 2 if self._bit_depth == 16 else 1
+        self._frame_buf = (ctypes.c_uint8 * (roi.width * roi.height * bpp))()
 
     def get_roi(self) -> ROI:
         self._require_connected()

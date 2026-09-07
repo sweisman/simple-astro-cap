@@ -7,6 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import numpy as np
+
 from simple_astro_cap.camera.abc import Frame
 
 from .abc import RecorderBase
@@ -61,6 +63,9 @@ class MkvRecorder(RecorderBase):
         cmd = [
             "ffmpeg",
             "-y",                           # overwrite
+            # Keep stderr quiet: it is only drained at stop(), and a full pipe
+            # would block ffmpeg, back up stdin, and hang the worker thread.
+            "-hide_banner", "-nostats", "-loglevel", "error",
             "-f", "rawvideo",
             "-pix_fmt", pix_fmt,
             "-s", f"{width}x{height}",
@@ -97,29 +102,40 @@ class MkvRecorder(RecorderBase):
         log.info("MKV recording started: %s (%dx%d %d-bit FFV1)", path, width, height, bit_depth)
 
     def stop(self) -> None:
-        if not self._recording:
-            return
-        self._recording = False
-        if self._proc is not None:
-            try:
-                self._proc.stdin.close()
-                self._proc.wait(timeout=10)
-                if self._proc.returncode != 0:
-                    stderr = self._proc.stderr.read().decode(errors="replace")
-                    log.warning("ffmpeg exited with code %d: %s",
-                                self._proc.returncode, stderr[-500:])
-            except Exception as e:
-                log.warning("Error closing ffmpeg: %s", e)
-                self._proc.kill()
-            finally:
-                self._proc = None
+        with self._lock:
+            if not self._recording:
+                return
+            self._recording = False
+            self._close_proc()
         log.info("MKV recording stopped: %d frames written to %s", self._count, self._path)
+
+    def _close_proc(self) -> None:
+        """Close ffmpeg's stdin and reap it; kill on timeout. Idempotent."""
+        proc, self._proc = self._proc, None
+        if proc is None:
+            return
+        try:
+            if proc.stdin is not None:
+                try:
+                    proc.stdin.close()
+                except BrokenPipeError:
+                    pass
+            proc.wait(timeout=10)
+            if proc.returncode != 0:
+                stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+                log.warning("ffmpeg exited with code %d: %s", proc.returncode, stderr[-500:])
+        except Exception as e:
+            log.warning("Error closing ffmpeg: %s", e)
+            proc.kill()
+            proc.wait(timeout=5)
 
     def _write_frame(self, frame: Frame) -> None:
         if self._proc is None or self._proc.stdin is None:
             return
         try:
-            self._proc.stdin.write(frame.data.tobytes())
+            self._proc.stdin.write(memoryview(np.ascontiguousarray(frame.data)))
         except BrokenPipeError:
             log.error("ffmpeg pipe broken — stopping recording")
             self._recording = False
+            self._stop_reason = "error"
+            self._close_proc()

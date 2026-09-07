@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from abc import abstractmethod
 from pathlib import Path
@@ -24,6 +25,10 @@ class RecorderBase(FrameConsumer):
     """
 
     def __init__(self) -> None:
+        # Held across on_frame (worker thread) and stop() (GUI thread) so a
+        # frame write can never interleave with finalising the file. RLock
+        # because on_frame calls stop() for auto-stop.
+        self._lock = threading.RLock()
         self._recording = False
         self._count = 0
         self._max_frames: int | None = None
@@ -114,24 +119,25 @@ class RecorderBase(FrameConsumer):
         return max(0, expected - self._frames_offered)
 
     def on_frame(self, frame: Frame) -> None:
-        if not self._recording:
-            return
-        if self._max_frames is not None and self._count >= self._max_frames:
-            self._stop_reason = "frame_limit"
-            self.stop()
-            return
-        if self._max_duration > 0 and self.elapsed >= self._max_duration:
-            self._stop_reason = "time_limit"
-            self.stop()
-            return
-        self._frames_offered += 1
-        if self._first_sequence < 0:
-            self._first_sequence = frame.sequence
-        self._last_sequence = frame.sequence
-        if self._min_interval > 0:
-            now = time.monotonic()
-            if (now - self._last_accept_time) < self._min_interval:
+        with self._lock:
+            if not self._recording:
                 return
-            self._last_accept_time = now
-        self._write_frame(frame)
-        self._count += 1
+            if self._max_frames is not None and self._count >= self._max_frames:
+                self._stop_reason = "frame_limit"
+                self.stop()
+                return
+            if self._max_duration > 0 and self.elapsed >= self._max_duration:
+                self._stop_reason = "time_limit"
+                self.stop()
+                return
+            self._frames_offered += 1
+            if self._first_sequence < 0:
+                self._first_sequence = frame.sequence
+            self._last_sequence = frame.sequence
+            if self._min_interval > 0:
+                now = time.monotonic()
+                if (now - self._last_accept_time) < self._min_interval:
+                    return
+                self._last_accept_time = now
+            self._write_frame(frame)
+            self._count += 1

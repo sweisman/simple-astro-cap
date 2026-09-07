@@ -74,6 +74,14 @@ class ToupcamCamera(CameraBase):
     def pre_open(self, camera_id: str) -> None:
         sdk = self._get_sdk()
         dev_id = self._parse_device_id(camera_id)
+        if self._handle is not None and not self._connected:
+            if self._device_id == dev_id:
+                return  # already pre-opened
+            try:
+                sdk.close(self._handle)  # release the previously probed camera
+            except Exception:
+                pass
+            self._handle = None
         handle = sdk.open(dev_id)
         self._handle = handle
         self._device_id = dev_id
@@ -360,6 +368,7 @@ class ToupcamCamera(CameraBase):
             self._frame_buf = (ctypes.c_uint8 * buf_size)()
         info = sdk.pull_image_v3(self._handle, self._frame_buf, bits)
         if info is None:
+            time.sleep(0.002)  # PullImage is non-blocking; don't spin a core
             return None
         return self._make_frame(info.width, info.height, self._bit_depth)
 

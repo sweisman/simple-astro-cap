@@ -395,6 +395,14 @@ class MainWindow(QMainWindow):
             if prange:
                 self._camera_panel.set_param_range(param, prange)
 
+        # Push the panel's exposure/gain to the camera: backends connect with
+        # their own defaults, and the panel restored saved values silently.
+        try:
+            self._camera.set_exposure(self._camera_panel.get_exposure_us())
+            self._camera.set_gain(self._camera_panel.gain_spin.value())
+        except Exception as e:
+            log.warning("Failed to apply saved exposure/gain: %s", e)
+
         # Apply saved offset to camera
         offset_range = self._camera.get_param_range(Param.OFFSET)
         if offset_range is not None:
@@ -872,10 +880,10 @@ class MainWindow(QMainWindow):
         seq = self._settings.session_sequence
         stem = f"{timestamp}-{seq:06d}"
 
-        # Common frame dimensions (after rotation)
+        # Common frame dimensions (after rotation). get_roi() is already the
+        # binned output size on every backend.
         roi = self._camera.get_roi()
-        frame_w = roi.width // self._camera.get_bin_mode()
-        frame_h = roi.height // self._camera.get_bin_mode()
+        frame_w, frame_h = roi.width, roi.height
         if self._portrait:
             frame_w, frame_h = frame_h, frame_w
         bit_depth = self._camera.get_bit_depth()

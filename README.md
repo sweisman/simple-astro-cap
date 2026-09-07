@@ -24,7 +24,7 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Sensor temperature** — live readout in the status bar (when supported by camera)
 - **Hardware auto-exposure/gain** — enabled when the camera supports it; greyed out otherwise
 - **Software auto-exposure** — always available; adjusts exposure based on frame brightness with proportional control; mutually exclusive with hardware auto
-- **HDR** — checkbox shown whenever the selected camera has native sensor HDR (QHY IMX585 bodies such as QHY5III585 and MiniCam8), enabled only when connected in 16-bit mode. A live sensor mode that applies to view, recordings and snaps; shown as an `HDR` badge in the status bar, `hdr: hardware` in the session `.txt`, and `Hdr=hardware` in snapshot metadata. Intended for planet-plus-stars fields (e.g. Mars parallax plate solving)
+- **HDR** — checkbox shown whenever the selected camera has native sensor HDR (QHY IMX585 bodies such as QHY5III585 and MiniCam8), enabled only when connected in 16-bit mode with 1x1 binning and hardware auto-exposure/gain off; while HDR is on, binning and the hardware auto controls are locked. A live sensor mode that applies to view, recordings and snaps; shown as an `HDR` badge in the status bar, `hdr: hardware` in the session `.txt`, and `Hdr=hardware` in snapshot metadata. Intended for planet-plus-stars fields (e.g. Mars parallax plate solving)
 - **Brightness/contrast controls** — display-only adjustments (keyboard B/C to focus, left/right to adjust)
 - **Histogram** — toggleable live histogram in sidebar
 - **Battery saver mode** — throttles display to 1 fps during recording to reduce CPU/GPU load on small field devices; checkbox enabled only while recording, state persisted
