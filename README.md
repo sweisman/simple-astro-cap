@@ -44,6 +44,10 @@ See [INSTALL.md](INSTALL.md) for full setup including udev rules, firmware, and 
 cd simple-astro-cap
 pip install -e .
 
+# One-time: fetch vendor SDK libraries + QHY firmware, install udev rules
+./scripts/fetch-deps.sh --qhy
+sudo ./scripts/install-udev-rules.sh
+
 # With a camera
 python run.py
 
@@ -54,7 +58,7 @@ python run.py --sim
 ### Requirements
 
 - Python 3.11+
-- Camera SDK libraries in `lib/` and firmware in `firmware/` (sourced from [AstroDMx Capture](https://www.astrodmx-capture.org.uk/) install)
+- Camera SDK libraries in `lib/` and firmware in `firmware/` (fetched from the vendors by `./scripts/fetch-deps.sh`)
 - USB access to the camera (udev rules required)
 - Optional: ffmpeg for MKV recording
 
@@ -156,7 +160,7 @@ JSON at `~/.config/simple-astro-cap/settings.json`. Camera is never persisted â€
 - Python 3.11+, PySide6 for GUI, no OpenCV dependency
 - `from __future__ import annotations` in every module
 - Exposure values always in microseconds internally; display conversion in `util/units.py`
-- Camera backends use ctypes to native SDK shared libraries in `lib/` (sourced from AstroDMx install)
+- Camera backends use ctypes to native SDK shared libraries in `lib/` (fetched by `scripts/fetch-deps.sh`)
 - No test suite â€” verify changes with `python -m py_compile` on all modified files
 
 ### Key patterns
@@ -171,7 +175,7 @@ JSON at `~/.config/simple-astro-cap/settings.json`. Camera is never persisted â€
 
 The QHY SDK has several quirks that required workarounds:
 
-- **Bundled dependencies**: The SDK's bundled `libusb`, `libstdc++`, and `libgcc_s` must be pre-loaded with `RTLD_GLOBAL` before loading `libqhyccd.so`. System versions are incompatible.
+- **Bundled dependencies**: If `lib/` contains the SDK's own `libusb`, `libstdc++`, and `libgcc_s`, they are pre-loaded with `RTLD_GLOBAL` before `libqhyccd.so`; older SDK builds were incompatible with the system versions. Current SDK builds link cleanly against system libraries, so the preload silently no-ops when the files are absent.
 - **USB state corruption**: Opening and then closing a camera handle corrupts the SDK's internal USB state. All subsequent calls fail until the camera is physically re-plugged. The app works around this by keeping the handle open after the initial probe (`pre_open`) and reusing it on `connect()`.
 - **Init sequence**: `InitResource` -> `Scan` -> `GetId` -> `Open` -> `SetStreamMode(LIVE)` -> `InitQHYCCD` -> `SetBitsMode` -> `SetBinMode` -> `SetResolution` -> `SetParams` -> `BeginLive`. Deviating from this order causes failures.
 - **Default parameters required**: The camera won't produce frames until exposure, gain, and USB traffic are explicitly set after `InitQHYCCD`.

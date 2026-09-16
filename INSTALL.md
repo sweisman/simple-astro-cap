@@ -15,10 +15,30 @@
 
 ---
 
-## 1. Python Dependencies
+## Quick Start
 
 ```bash
 cd simple-astro-cap
+pip install -e .
+
+# Fetch vendor SDK libraries and QHY firmware from the vendors' own downloads
+./scripts/fetch-deps.sh --qhy
+
+# Generate and install udev rules with this checkout's real paths
+sudo ./scripts/install-udev-rules.sh
+
+# Unplug and replug the camera, then:
+python run.py
+```
+
+No other astronomy software needs to be installed. Everything below is detail on what
+those two scripts do and how to do it by hand.
+
+---
+
+## 1. Python Dependencies
+
+```bash
 pip install -e .
 ```
 
@@ -39,163 +59,136 @@ This installs:
 
 ---
 
-## 2. Camera SDK Libraries
+## 2. Camera SDK Libraries and Firmware
 
-The application requires camera SDK shared libraries in `lib/`:
+`scripts/fetch-deps.sh` downloads the vendor SDKs and unpacks what the application needs
+into `lib/` and `firmware/qhy/`. Both directories are gitignored — see
+[Licensing](#licensing) for why.
+
+```bash
+./scripts/fetch-deps.sh              # every vendor
+./scripts/fetch-deps.sh --qhy        # just QHY
+./scripts/fetch-deps.sh --qhy --force   # re-fetch / upgrade SDK version
+./scripts/fetch-deps.sh --clean-cache   # drop vendor-cache/
+```
+
+| Vendor | Automated? | Source |
+|--------|-----------|--------|
+| QHY | Yes | `sdk_linux64_<version>.tgz` from qhyccd.com |
+| ZWO ASI | Yes (~112 MB — ZWO has no Linux-only endpoint) | ZWO download centre |
+| Player One | No | <https://player-one-astronomy.com/service/software/> |
+| Touptek | No | <https://www.touptek-astro.com/download/> |
+
+SDK versions and URLs live in `scripts/deps.conf`. Bumping a vendor version is a one-line
+edit there.
+
+### The QHY archive covers everything QHY-related
+
+One download provides `libqhyccd.so`, the complete firmware set (109 files), QHYCCD's
+official udev rules, and the GPLv2 source for `fxload`. The extracted SDK stays in
+`vendor-cache/`, where `install-udev-rules.sh` reads the rules and the fxload source.
+
+### Player One and Touptek
+
+These two backends resolve their library through `ctypes.util.find_library()` rather than
+the project's `lib/` directory, so the supported path is a system-wide install using the
+vendor's own installer. If you would rather keep them project-local, download the Linux
+SDK archive by hand into `vendor-cache/` and re-run `fetch-deps.sh` — it will find and
+unpack it.
+
+Touptek OEMs cameras under many brand names (Altair, Omegon, Bresser, Celestron, …) —
+these all use the same SDK and the same udev rules.
+
+### Which libraries end up in `lib/`
 
 | File | Purpose |
 |------|---------|
 | `libqhyccd.so` | QHY camera SDK |
 | `libASICamera2.so` | ZWO ASI camera SDK |
-| `libPlayerOneCamera.so` | Player One camera SDK |
-| `libtoupcam.so` | Touptek camera SDK |
-| `libgcc_s.so.1` | GCC runtime (required by QHY SDK) |
-| `libstdc++.so.6` | C++ stdlib (required by QHY SDK) |
-| `libusb-1.0.so.0` | USB library (specific version required by QHY SDK) |
+| `libPlayerOneCamera.so` | Player One camera SDK (optional) |
+| `libtoupcam.so` | Touptek camera SDK (optional) |
 
-These are sourced from an [AstroDMx Capture](https://www.astrodmx-capture.org.uk/)
-installation at `/opt/AstroDMx-Capture/lib/`. Copy or symlink them into the project's
-`lib/` directory. They are loaded automatically at runtime.
-
-**Important**: The QHY SDK requires its own `libusb-1.0.so.0`. The system libusb is a
-different version and will cause silent failures. The application pre-loads the correct
-version automatically.
+**Note on bundled runtime libraries.** Older QHY builds shipped their own
+`libusb-1.0.so.0`, `libstdc++.so.6` and `libgcc_s.so.1`, because the system libusb was a
+different version and caused silent failures. The application still pre-loads those three
+with `RTLD_GLOBAL` from `lib/` if they are present (`camera/qhy/sdk.py`), and silently
+carries on if they are not. Current QHY SDK builds link cleanly against system libraries,
+so `fetch-deps.sh` does not install them. If you hit unexplained QHY connection failures,
+dropping the SDK's own copies into `lib/` is the first thing to try.
 
 ---
 
 ## 3. USB Device Permissions (udev rules)
 
-Cameras are USB devices. Without udev rules, only root can access them.
-
-### ZWO ASI Cameras
-
-Create `/etc/udev/rules.d/99-asi.rules`:
-
-```
-ACTION=="add", ATTR{idVendor}=="03c3", RUN+="/bin/sh -c '/bin/echo 200 >/sys/module/usbcore/parameters/usbfs_memory_mb'"
-SUBSYSTEMS=="usb", ATTR{idVendor}=="03c3", MODE="0666"
-```
-
-### QHY Cameras
-
-QHY cameras require both permissions AND firmware loading. Firmware must be uploaded
-to the camera each time it is plugged in, using the `fxload` utility.
-
-Create `/etc/udev/rules.d/99-qhyccd.rules`:
-
-```
-ACTION!="add", GOTO="qhy_end"
-SUBSYSTEM!="usb", GOTO="qhy_end"
-
-# ---- Firmware loading (FX3 cameras) ----
-# QHY5III585
-ATTRS{idVendor}=="1618", ATTRS{idProduct}=="0585", RUN+="/path/to/simple-astro-cap/bin/fxload -t fx3 -I /path/to/simple-astro-cap/firmware/qhy/QHY5III585.img -D $env{DEVNAME}"
-# QHY5III178
-ATTRS{idVendor}=="1618", ATTRS{idProduct}=="0178", RUN+="/path/to/simple-astro-cap/bin/fxload -t fx3 -I /path/to/simple-astro-cap/firmware/qhy/QHY5III178.img -D $env{DEVNAME}"
-# QHY5III290
-ATTRS{idVendor}=="1618", ATTRS{idProduct}=="0290", RUN+="/path/to/simple-astro-cap/bin/fxload -t fx3 -I /path/to/simple-astro-cap/firmware/qhy/QHY5III290.img -D $env{DEVNAME}"
-# QHY5III462
-ATTRS{idVendor}=="1618", ATTRS{idProduct}=="0462", RUN+="/path/to/simple-astro-cap/bin/fxload -t fx3 -I /path/to/simple-astro-cap/firmware/qhy/QHY5III462.img -D $env{DEVNAME}"
-# QHY5III678
-ATTRS{idVendor}=="1618", ATTRS{idProduct}=="0678", RUN+="/path/to/simple-astro-cap/bin/fxload -t fx3 -I /path/to/simple-astro-cap/firmware/qhy/QHY5III678.img -D $env{DEVNAME}"
-
-# Add more cameras as needed — see firmware/qhy/ for available firmware files.
-# The product ID is typically the model number (e.g., 0585 for QHY5III585).
-
-# ---- Permissions for all QHY devices ----
-ATTRS{idVendor}=="1618", MODE="0666"
-ATTRS{idVendor}=="16c0", MODE="0666"
-ATTRS{idVendor}=="1856", MODE="0666"
-ATTRS{idVendor}=="04b4", MODE="0666"
-
-LABEL="qhy_end"
-```
-
-**Replace `/path/to/simple-astro-cap/`** with the actual install location.
-
-### Using AstroDMx udev rules instead
-
-If [AstroDMx Capture](https://www.astrodmx-capture.org.uk/) is installed at
-`/opt/AstroDMx-Capture/`, its udev rules already handle firmware loading and
-permissions for all supported QHY cameras. No additional setup is needed for QHY.
-
-You still need the rules below for other camera brands.
-
-### Player One Cameras
-
-Create `/etc/udev/rules.d/99-playerone.rules`:
-
-```
-SUBSYSTEMS=="usb", ATTR{idVendor}=="a0a0", MODE="0666"
-```
-
-Player One cameras do not require firmware loading. The SDK library
-(`libPlayerOneCamera.so`) can be downloaded from the
-[Player One Astronomy website](https://player-one-astronomy.com/).
-
-### Touptek Cameras
-
-Create `/etc/udev/rules.d/99-touptek.rules`:
-
-```
-SUBSYSTEMS=="usb", ATTR{idVendor}=="0547", MODE="0666"
-SUBSYSTEMS=="usb", ATTR{idVendor}=="04b4", MODE="0666"
-```
-
-Touptek cameras do not require firmware loading. The SDK library
-(`libtoupcam.so`) can be downloaded from the
-[Touptek website](https://www.touptek.com/). Note that Touptek OEMs cameras
-under many brand names (Altair, Omegon, Bresser, Celestron, etc.) — these
-use the same SDK and udev rules.
-
-### Applying udev rules
-
-After creating or modifying rules:
+Cameras are USB devices. Without udev rules, only root can access them. QHY cameras
+additionally need **firmware uploaded over USB every time they are plugged in**.
 
 ```bash
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+./scripts/install-udev-rules.sh --dry-run   # print the rules, install nothing
+sudo ./scripts/install-udev-rules.sh        # install into /etc/udev/rules.d and reload
 ```
 
-Then unplug and replug the camera.
+The script:
+
+- resolves a usable `fxload` and checks it actually supports FX3 targets;
+- generates `85-qhyccd.rules` from **QHYCCD's own rules file**, rewriting `/sbin/fxload`
+  and `/lib/firmware/qhy` to this checkout's absolute paths — so every QHY model QHYCCD
+  supports is covered, not a hand-maintained subset;
+- warns about any firmware a rule references but that isn't present on disk;
+- generates permission rules for ASI, Player One and Touptek;
+- raises `usbfs_memory_mb` to 200 for QHY, ASI and Player One — the 16 MB default is not
+  enough for large frames at high frame rates;
+- reloads udev.
+
+Run `fetch-deps.sh --qhy` first: the QHY rules are derived from the SDK in
+`vendor-cache/`, and the script will skip them if it isn't there.
+
+After installing, unplug and replug the camera.
 
 ---
 
-## 4. fxload Utility (QHY only)
+## 4. fxload
 
-The `fxload` utility uploads firmware to QHY cameras over USB. It is required for
-QHY cameras to function.
+`fxload` uploads firmware to QHY cameras over USB. It is invoked by **udev at plug-in
+time** — the application itself never calls it, and does not depend on it being present
+while running.
 
-**If AstroDMx is installed**: it provides fxload at `/opt/AstroDMx-Capture/bin/fxload`.
+Confusingly, two incompatible programs are both called `fxload`:
 
-**Otherwise**, install fxload from your distribution:
+| Variant | Firmware flag | Device selector | Where it comes from |
+|---------|---------------|-----------------|---------------------|
+| **ezusb** (David Brownell's original, GPLv2) | `-I` | `-D $env{DEVNAME}` | QHY's SDK, `usr/local/fx3load/` |
+| **libusb** (modern fork, `fxload` 1.x) | `-i` | `-p <bus>,<addr>` | distro packages |
+
+Both support FX3. `install-udev-rules.sh` detects which one it found and emits matching
+arguments, so either will work. It prefers the ezusb variant, because that is what QHY's
+rules are written against and it talks to usbfs directly instead of rescanning USB from
+inside a udev `add` event.
+
+**Using your distro's package:**
 
 ```bash
 # Arch (AUR)
 yay -S fxload
-
 # Debian/Ubuntu
 sudo apt install fxload
 ```
 
-If using a system-installed fxload, update the udev rules above to use `/usr/bin/fxload`
-or `/sbin/fxload` instead of the project path.
+**Building QHY's own copy** (no distro package needed; plain `cc`, no libusb headers):
+
+```bash
+./scripts/install-udev-rules.sh --build-fxload
+```
+
+This compiles the GPLv2 source from the QHY SDK into `bin/fxload` and keeps
+`main.c`, `ezusb.c`, `ezusb.h`, `Makefile` and `COPYING` next to it.
+
+If no `fxload` with FX3 support can be found, the script fails with these options rather
+than writing rules that would silently never fire.
 
 ---
 
-## 5. QHY Firmware Files
-
-QHY firmware files are needed in `firmware/qhy/`. These can be sourced from an
-AstroDMx Capture installation (`/opt/AstroDMx-Capture/firmware/qhy/`) or from
-the QHY SDK distribution.
-
-If you have a QHY camera model not listed in the udev rules, check `firmware/qhy/`
-for a matching `.img` (FX3) or `.HEX` (legacy FX2) file and add a rule following
-the pattern above.
-
----
-
-## 6. Running
+## 5. Running
 
 ```bash
 # From the project directory
@@ -210,7 +203,7 @@ python run.py --sim
 
 ---
 
-## 7. Verifying Camera Detection
+## 6. Verifying Camera Detection
 
 1. Plug in the camera and wait 2-3 seconds (firmware upload)
 2. Check that the device is accessible:
@@ -225,19 +218,44 @@ python run.py --sim
 - Check `dmesg` for USB errors after plugging in
 - Verify udev rules are loaded: `udevadm test /sys/bus/usb/devices/<device>`
 - For QHY: firmware must load successfully. Check `dmesg` for fxload output
+- Confirm the generated rule points at a firmware file that exists:
+  `./scripts/install-udev-rules.sh --dry-run | grep <your model>`
 
 **Permission denied**:
 - Verify udev rules set `MODE="0666"` for the camera's vendor ID
 - Run `ls -l /dev/bus/usb/XXX/YYY` to check device permissions
 
+**QHY firmware never uploads**:
+- If you are on the libusb `fxload`, try the ezusb one:
+  `./scripts/install-udev-rules.sh --build-fxload` then re-run with `sudo`
+
 **QHY SDK fails silently**:
-- The QHY SDK's `libusb-1.0.so.0` must be used (not the system version)
-- This is handled automatically, but if you see connection failures, verify
-  `lib/libusb-1.0.so.0` exists in the project directory
+- See the note on bundled runtime libraries in §2
 
 **ffmpeg not found (MKV recording)**:
 - Install ffmpeg from your package manager
 - Only required if you want to record in MKV format; PNG and SER work without it
+
+---
+
+## Licensing
+
+`LICENSE` (GPL-3) covers the Python source in this repository only.
+
+`lib/`, `firmware/`, `bin/` and `vendor-cache/` hold third-party binaries under their own
+terms and are deliberately **never tracked in git**:
+
+- **Vendor SDK libraries** (`libqhyccd.so`, `libASICamera2.so`, `libPlayerOneCamera.so`,
+  `libtoupcam.so`) are proprietary. They are loaded at runtime via `ctypes` and are not
+  redistributed by this project.
+- **QHY firmware images** are QHYCCD's, with no public redistribution grant. This is why
+  they are fetched from QHYCCD rather than vendored — the same approach distribution
+  packagers take.
+- **`fxload`** is GPLv2-or-later. If you build it with `--build-fxload`, the corresponding
+  source and `COPYING` are placed alongside the binary so that copy stays compliant.
+
+Fetching these from the vendors is your action as the installer, not redistribution by
+this project.
 
 ---
 
@@ -247,8 +265,8 @@ python run.py --sim
 |-----------|-----|---------|------------|---------|-----------|
 | Python 3.11+ | Required | Required | Required | Required | Required |
 | PySide6, NumPy, Pillow | Required | Required | Required | Required | Required |
-| udev rules | Required | Required | Check SDK docs | Check SDK docs | Not needed |
+| SDK library in `lib/` | Required | Required | System install | System install | Not needed |
+| udev rules | Required | Required | Required | Required | Not needed |
 | fxload | Required | Not needed | Not needed | Not needed | Not needed |
 | Firmware files | Required | Not needed | Not needed | Not needed | Not needed |
 | ffmpeg | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) |
-| AstroDMx installed | Alternative to manual setup | No | No | No | No |

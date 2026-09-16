@@ -6,9 +6,12 @@ __pycache__/
 dist/
 build/
 
-# Bundled native libraries and firmware (large binaries)
+# Third-party vendor binaries fetched by scripts/fetch-deps.sh.
+# Never tracked: these are vendor-licensed and not ours to redistribute.
 lib/
 firmware/
+bin/
+vendor-cache/
 
 # IDE
 .vscode/
