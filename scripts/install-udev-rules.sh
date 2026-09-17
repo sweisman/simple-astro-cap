@@ -31,6 +31,24 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m warn:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# udev splits the RUN+="..." command on whitespace and has no way to quote an argument,
+# so a checkout path containing a space would silently become two arguments and firmware
+# would never load. Catch that here rather than shipping rules that quietly never fire.
+case "$REPO_ROOT" in
+    *[[:space:]]*|*'"'*|*'\'*)
+        die "This checkout is at a path udev cannot express in a RUN+= command:
+  $REPO_ROOT
+It contains whitespace, a double quote or a backslash. udev has no argument quoting,
+so the generated firmware-load rules would silently never fire.
+Move the checkout to a path without those characters and re-run."
+        ;;
+esac
+
+# Escape a string for safe use as a sed replacement (delimiter '|', plus \ and &).
+sed_escape_replacement() {
+    printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)      DRY_RUN=1 ;;
@@ -170,9 +188,14 @@ generate_qhy() {
     printf '%s\n' "$HEADER" > "$out"
     printf '%s\n\n' "# Derived from QHYCCD's own 85-qhyccd.rules (SDK $(basename "$SDK_DIR"))." >> "$out"
 
-    # Rewrite the vendor's absolute paths to this checkout's.
-    sed -e "s|/sbin/fxload|$FXLOAD|g" \
-        -e "s|/lib/firmware/qhy|$FIRMWARE_DIR|g" \
+    # Rewrite the vendor's absolute paths to this checkout's. Both replacements are
+    # escaped: a path containing & or | would otherwise corrupt the substitution.
+    local fxload_esc firmware_esc
+    fxload_esc="$(sed_escape_replacement "$FXLOAD")"
+    firmware_esc="$(sed_escape_replacement "$FIRMWARE_DIR")"
+
+    sed -e "s|/sbin/fxload|$fxload_esc|g" \
+        -e "s|/lib/firmware/qhy|$firmware_esc|g" \
         "$QHY_RULES_TEMPLATE" >> "$out"
 
     if [[ "$FXLOAD_KIND" == "libusb" ]]; then
@@ -191,11 +214,29 @@ ACTION=="add", ATTR{idVendor}=="1618", RUN+="/bin/sh -c '/bin/echo 200 >/sys/mod
 EOF
 
     # Sanity: every firmware the rules reference must actually exist.
-    local missing=0 fw
+    #
+    # Pull the filename out of the fxload arguments themselves (the token after -i/-I for
+    # the image, after -s for the second-stage loader) rather than grepping for the
+    # firmware directory. Matching on the directory would treat the checkout path as a
+    # regex, so a path containing '+', '(' or '[' silently matched nothing and this whole
+    # check quietly passed. Argument position has no such trap.
+    local missing=0 checked=0 fw
     while read -r fw; do
+        checked=$((checked + 1))
         [[ -f "$fw" ]] || { warn "rule references missing firmware: $(basename "$fw")"; missing=$((missing + 1)); }
-    done < <(grep -oE "$FIRMWARE_DIR/[A-Za-z0-9_.-]+" "$out" | sort -u)
-    [[ $missing -eq 0 ]] || warn "$missing firmware file(s) referenced but not present (harmless if you don't own those models)"
+    done < <(awk '
+        /fxload/ {
+            for (i = 1; i < NF; i++)
+                if ($i == "-i" || $i == "-I" || $i == "-s") {
+                    f = $(i + 1); sub(/"$/, "", f); print f
+                }
+        }' "$out" | sort -u)
+
+    [[ $checked -gt 0 ]] \
+        || die "Could not extract any firmware path from the generated rules — refusing to
+install rules that may be malformed. Please report this with your checkout path."
+    [[ $missing -eq 0 ]] \
+        || warn "$missing of $checked firmware file(s) referenced but not present (harmless if you don't own those models)"
 
     local n
     n="$(grep -c 'fxload' "$out")"

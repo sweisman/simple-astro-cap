@@ -145,6 +145,18 @@ Run `fetch-deps.sh --qhy` first: the QHY rules are derived from the SDK in
 
 After installing, unplug and replug the camera.
 
+### If you move the checkout
+
+The installed rules contain absolute paths, baked in at generation time. Both scripts
+work from any location and can be invoked from any working directory, but **if you move
+or rename the checkout after installing, re-run `sudo ./scripts/install-udev-rules.sh`** —
+otherwise the rules point at the old location and firmware will silently stop loading.
+
+udev has no way to quote an argument inside `RUN+=`, so a checkout path containing a
+space, a double quote or a backslash cannot produce working firmware rules. The script
+refuses to generate them rather than installing rules that would never fire. Other
+awkward characters (`&`, `|`, `+`, brackets) are handled correctly.
+
 ---
 
 ## 4. fxload
