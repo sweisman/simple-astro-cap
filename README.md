@@ -182,7 +182,11 @@ The QHY SDK has several quirks that required workarounds:
 - **SetQHYCCDReadMode**: Not called — AstroDMx doesn't call it and the camera works without it.
 - **Auto-exposure**: Control ID 88 (0x58) via `SetQHYCCDParam` enables the SDK's internal 3A auto-exposure system, which manages both exposure and gain together. `QHYCCD_SetAutoEXPmessureValue` sets the target brightness. These signatures were reverse-engineered from the shared library as they're undocumented.
 - **USB traffic**: Currently hardcoded to 30; not yet exposed as a user control.
-- **Native HDR**: Control ID 97 (`CONTROL_HDR` in `qhyccdcamdef.h`) via `SetQHYCCDParam`; only the QHY5III585 and MiniCam8 classes in the bundled SDK implement it. The SDK fits k/b between its two 12-bit gain channels and re-aligns them into one 16-bit frame, so 16-bit mode should be selected. The ID is taken from the header and has not yet been confirmed on hardware.
+- **Native HDR**: Control ID 1029 (`CONTROL_HDR` in `qhyccdstruct.h`) via `SetQHYCCDParam`; only the QHY5III585 and MiniCam8 classes in the bundled SDK implement it. The SDK fits `high = k*low + b` between its two 12-bit gain channels and re-aligns them into one 16-bit frame, so 16-bit mode must be selected — QHY document HDR as 16-bit only, not available for 8-bit. Only the *low* channel's k/b are exposed (1030/1031); the `_H_k`/`_H_b` entries are commented out in the header.
+  - Take these IDs from a compiler, not from the `/*NNNN*/` comments in `qhyccdstruct.h` — five entries above HDR are commented out, so the annotations run five high (`CONTROL_HDR` is annotated 1034, compiles to 1029). They sit in the `//TEST id name list` block, which QHY call "custom controls provided by the QHY SDK"; the main enum ends at `CONTROL_MAX_ID = 94`.
+  - `CONTROL_HDR` is tri-state, not boolean: `0` as-is output, `1` splice using the loaded k/b, `2` calculate k/b once. Enabling writes `2`, because `1` would splice with whatever k/b are left in the registers and QHY warn that bad k/b cause banding.
+  - Gain and offset are driven by the camera in HDR mode and any values set in software have no effect, so the UI greys them out.
+  - Not yet confirmed on hardware.
 
 ## Testing needed
 

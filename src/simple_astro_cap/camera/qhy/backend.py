@@ -9,7 +9,7 @@ import time
 import numpy as np
 
 from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
-from .constants import ControlId, StreamMode
+from .constants import ControlId, HdrMode, StreamMode
 from .sdk import QhyError, QhySdk
 
 log = logging.getLogger(__name__)
@@ -371,17 +371,35 @@ class QhyCamera(CameraBase):
         return self._info.has_hdr  # type: ignore[union-attr]
 
     def set_hdr(self, enabled: bool) -> None:
+        """Turn native HDR on or off.
+
+        Enabling writes CALIBRATE rather than SPLICE: the SDK derives k/b for
+        the low channel from the sensor and then splices with those values.
+        Writing SPLICE directly would reuse whatever k/b are already loaded,
+        which on a fresh session are unset — QHY warns that bad k/b produce
+        image banding. The SDK moves itself out of CALIBRATE once it has the
+        values, so get_hdr() may read back either CALIBRATE or SPLICE.
+        """
         self._require_connected()
         sdk = self._get_sdk()
-        sdk.set_param(self._handle, ControlId.CONTROL_HDR, 1.0 if enabled else 0.0)
-        log.info("Native HDR %s", "enabled" if enabled else "disabled")
+        mode = HdrMode.CALIBRATE if enabled else HdrMode.OFF
+        sdk.set_param(self._handle, ControlId.CONTROL_HDR, float(mode))
+        log.info("Native HDR %s (mode %d)", "enabled" if enabled else "disabled", mode)
+
+    def recalibrate_hdr(self) -> None:
+        """Re-derive the low-channel k/b. Use after a gain or offset change."""
+        self._require_connected()
+        sdk = self._get_sdk()
+        sdk.set_param(self._handle, ControlId.CONTROL_HDR, float(HdrMode.CALIBRATE))
+        log.info("Native HDR recalibration requested")
 
     def get_hdr(self) -> bool:
         if not self._connected:
             return False
         sdk = self._get_sdk()
         try:
-            return sdk.get_param(self._handle, ControlId.CONTROL_HDR) != 0.0
+            # Both SPLICE and CALIBRATE mean HDR is active; only OFF is off.
+            return sdk.get_param(self._handle, ControlId.CONTROL_HDR) != float(HdrMode.OFF)
         except Exception:
             return False
 

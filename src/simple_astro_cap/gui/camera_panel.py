@@ -499,11 +499,26 @@ class CameraPanel(QGroupBox):
         self.bin_combo.setEnabled(usable and not hdr_on)
         self.auto_exposure_check.setEnabled(self._auto_exposure_supported and not hdr_on)
         self.auto_gain_check.setEnabled(self._auto_gain_supported and not hdr_on)
+
+        # QHY: "In Linearity HDR mode, the Gain and Offset values are set by
+        # default and do not need to be adjusted. Any Gain and Offset settings
+        # in the software will have no effect." Grey them out rather than let
+        # them look live while the camera ignores them.
+        # Auto-gain also owns gain_spin (_on_auto_gain_toggled), so honour it
+        # here too or turning HDR off would re-enable gain under auto-gain.
+        self.gain_spin.setEnabled(
+            usable and not hdr_on and not self.auto_gain_check.isChecked())
+        self.offset_spin.setEnabled(usable and not hdr_on)
+
         if hdr_on:
             for w in (self.bin_combo, self.auto_exposure_check, self.auto_gain_check):
                 w.setToolTip("Disabled while HDR is on")
+            for w in (self.gain_spin, self.offset_spin):
+                w.setToolTip("HDR sets gain and offset itself; changes here have no effect")
         else:
             self.bin_combo.setToolTip("")
+            self.gain_spin.setToolTip("")
+            self.offset_spin.setToolTip("")
             self.auto_exposure_check.setToolTip(
                 "" if self._auto_exposure_supported else "Not supported by this camera")
             self.auto_gain_check.setToolTip(

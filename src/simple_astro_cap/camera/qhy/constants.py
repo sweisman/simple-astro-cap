@@ -53,17 +53,37 @@ class ControlId(IntEnum):
     # Auto-exposure (SDK-internal 3A system manages exposure + gain together)
     CAM_AUTOEXPOSURE = 88  # 0x58: SetQHYCCDParam → SetAutoExposure
 
-    # Native HDR (IMX585-based bodies: QHY5III585, MiniCam8). IDs from
-    # qhyccdcamdef.h; the SDK fits high = k*low + b between its two
-    # 12-bit gain channels and re-aligns them into one 16-bit frame.
-    # CONTROL_HDR must be confirmed on hardware with IsQHYCCDControlAvailable.
-    CONTROL_HDR = 97  # 0 = off, 1 = on
-    CONTROL_HDR_H_K = 98
-    CONTROL_HDR_H_B = 99
-    CONTROL_HDR_L_K = 100
-    CONTROL_HDR_L_B = 101
-    CONTROL_HDR_X = 102
-    CONTROL_HDR_SHOWKB = 103
+    # Native HDR (IMX585-based bodies: QHY5III585, MiniCam8). The SDK fits
+    # high = k*low + b between its two 12-bit gain channels and re-aligns them
+    # into one 16-bit frame; only the low channel's k/b are exposed.
+    #
+    # These live in the "TEST id name list" block of qhyccdstruct.h, which QHY
+    # documents as "custom controls provided by the QHY SDK". Take the values
+    # from a compiler, not from the /*NNNN*/ comments in that header: five
+    # entries above HDR are commented out, so the annotations run five high
+    # (CONTROL_HDR is annotated 1034 but compiles to 1029). The main enum ends
+    # at CONTROL_MAX_ID = 94, so the previous 97-103 addressed nothing at all
+    # and IsQHYCCDControlAvailable never reported HDR as present.
+    CONTROL_HDR = 1029
+    CONTROL_HDR_L_K = 1030
+    CONTROL_HDR_L_B = 1031
+    CONTROL_HDR_X = 1032
+    CONTROL_HDR_SHOWKB = 1033
+
+
+class HdrMode(IntEnum):
+    """Values for ControlId.CONTROL_HDR.
+
+    Not a boolean. From qhyccdstruct.h: "HDR status 0:As-is output
+    1:Splice according to k and b values 2:Calculate k and b, only once".
+
+    CALIBRATE derives k/b from the sensor and then splices with them; SPLICE
+    reuses whatever k/b are already loaded, which on a fresh session are unset.
+    """
+
+    OFF = 0
+    SPLICE = 1
+    CALIBRATE = 2
 
 
 class StreamMode(IntEnum):
