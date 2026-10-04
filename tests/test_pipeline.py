@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from simple_astro_cap.pipeline.abc import FrameConsumer
 from simple_astro_cap.pipeline.simple import SimpleHarness
 
@@ -101,3 +103,39 @@ def test_drain_terminates_while_capture_keeps_overflowing():
     assert time.monotonic() - t0 < 1.0
     harness.remove_consumer(rec)
     harness.stop()
+
+
+def test_queued_frames_keep_their_original_consumer():
+    harness = SimpleHarness(FakeCamera(0))
+    old, new = Collect(), Collect()
+    harness.add_consumer(old, queued=True)
+    harness._enqueue(make_frame(1))
+    harness.remove_consumer(old)
+    harness.add_consumer(new, queued=True)
+    harness._enqueue(make_frame(2))
+    harness._run_writer()
+    assert old.seqs == [1]
+    assert new.seqs == [2]
+
+
+def test_stop_keeps_stuck_thread_owned_and_prevents_restart(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    class Stuck(FakeCamera):
+        def get_live_frame(self, timeout_ms=500):
+            entered.set()
+            release.wait(2)
+            return None
+    monkeypatch.setattr("simple_astro_cap.pipeline.simple._JOIN_WARN_S", 0.005)
+    monkeypatch.setattr("simple_astro_cap.pipeline.simple._JOIN_GIVE_UP_S", 0.01)
+    harness = SimpleHarness(Stuck(0))
+    harness.start()
+    assert entered.wait(1)
+    try:
+        assert not harness.stop()
+        assert harness._capture.is_alive()
+        with pytest.raises(RuntimeError, match="still stopping"):
+            harness.start()
+    finally:
+        release.set()
+        harness._capture.join(timeout=1)
+        assert harness.stop()

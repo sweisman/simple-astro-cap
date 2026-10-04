@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +50,8 @@ from simple_astro_cap.recording.ser_recorder import SerRecorder
 
 log = logging.getLogger(__name__)
 
+_RECORD_DRAIN_TIMEOUT_S = 10.0
+
 
 class MainWindow(QMainWindow):
     def __init__(self, camera: CameraBase):
@@ -57,6 +60,11 @@ class MainWindow(QMainWindow):
         self._harness: SimpleHarness | None = None
         self._display_bridge = DisplayBridge()
         self._recorder: RecorderBase | None = None
+        self._finish_thread: threading.Thread | None = None
+        self._finish_losses: dict[str, int | None] = {}
+        self._finish_started = 0.0
+        self._disconnect_pending = False
+        self._close_pending = False
         self._rec_meta: dict | None = None  # metadata captured at recording start
         self._latest_seq = 0  # sequence of the newest frame seen, for fps
         self._fps_prev_seq = 0
@@ -82,6 +90,9 @@ class MainWindow(QMainWindow):
         self._setup_fps_timer()
         self._auto_poll_timer = QTimer(self)
         self._auto_poll_timer.timeout.connect(self._poll_auto_values)
+        self._finish_timer = QTimer(self)
+        self._finish_timer.setInterval(50)
+        self._finish_timer.timeout.connect(self._poll_recording_finish)
 
         # Apply saved settings to UI
         self._apply_settings(self._settings)
@@ -259,11 +270,12 @@ class MainWindow(QMainWindow):
             if key == Qt.Key.Key_X:
                 if self._camera_panel.auto_exposure_check.isEnabled():
                     self._camera_panel.auto_exposure_check.toggle()
-                else:
+                elif self._camera_panel.soft_auto_exposure_check.isEnabled():
                     self._camera_panel.soft_auto_exposure_check.toggle()
                 return
             if key == Qt.Key.Key_G:
-                self._camera_panel.auto_gain_check.toggle()
+                if self._camera_panel.auto_gain_check.isEnabled():
+                    self._camera_panel.auto_gain_check.toggle()
                 return
 
         # Arrow keys (always active)
@@ -455,9 +467,14 @@ class MainWindow(QMainWindow):
             self._auto_poll_timer.stop()
         self._remove_soft_auto()
         if self._recorder is not None:
+            self._disconnect_pending = True
             self._finish_recording()
+            return
+        self._disconnect_pending = False
         if self._harness:
-            self._harness.stop()
+            if not self._harness.stop():
+                self._status_rec.setText("Capture is still stopping; disconnect deferred")
+                return
             self._harness = None
         self._display_bridge.cancel_snapshot()
         self._display_bridge.take()  # never show a frame from a previous session
@@ -604,6 +621,8 @@ class MainWindow(QMainWindow):
         self._fps_prev_seq = self._latest_seq
         self._fps_display = delta
         self._status_fps.setText(f"{self._fps_display:.0f} fps")
+        if self._finish_thread is not None:
+            return
         if self._harness is not None and self._harness.error is not None:
             self._on_harness_error()
             return
@@ -617,6 +636,9 @@ class MainWindow(QMainWindow):
         else:
             self._status_temp.setText("")
         if self._recorder is not None:
+            if self._recorder.is_recording() and self._recorder.duration_expired():
+                self._finish_recording(reason="time_limit")
+                return
             if self._recorder.is_recording():
                 n = self._recorder.frames_written()
                 fps = self._recorder.actual_fps
@@ -635,7 +657,9 @@ class MainWindow(QMainWindow):
         # Must stop harness (which stops live) before changing bin mode
         was_running = self._harness and self._harness.is_running()
         if was_running:
-            self._harness.stop()
+            if not self._harness.stop():
+                self._status_rec.setText("Capture is still stopping; binning unchanged")
+                return
         try:
             self._camera.set_bin_mode(bin_factor)
         except Exception as e:
@@ -771,7 +795,9 @@ class MainWindow(QMainWindow):
             return
         was_running = self._harness and self._harness.is_running()
         if was_running:
-            self._harness.stop()
+            if not self._harness.stop():
+                self._status_rec.setText("Capture is still stopping; HDR unchanged")
+                return
         try:
             self._camera.set_hdr(enabled)
             self._settings.hdr = enabled
@@ -885,13 +911,14 @@ class MainWindow(QMainWindow):
         return filename
 
     def _on_toggle_recording(self) -> None:
-        if self._recorder and self._recorder.is_recording():
+        if self._recorder is not None:
             self._on_stop_recording()
         else:
             self._on_start_recording()
 
     def _on_start_recording(self) -> None:
-        if not self._camera.is_connected() or not self._harness:
+        if (self._recorder is not None or not self._camera.is_connected()
+                or not self._harness or not self._harness.is_running()):
             return
 
         fmt = self._recording_panel.format_name
@@ -991,24 +1018,51 @@ class MainWindow(QMainWindow):
     def _on_stop_recording(self) -> None:
         self._finish_recording()
 
-    def _finish_recording(self) -> None:
-        """Clean up after recording ends (manual stop or auto-stop)."""
-        if self._recorder is None:
+    def _finish_recording(self, reason: str = "") -> None:
+        """Drain/finalize in the background; never wait for disk I/O in Qt."""
+        if self._recorder is None or self._finish_thread is not None:
             return
         # Snapshot losses at the stop request: overflow while flushing the
         # queue below belongs to frames after the recording ended.
-        losses = self._loss_counters()
-        if self._harness:
-            # Frames captured before the stop request are still queued;
-            # let them reach the file before closing it.
-            if self._recorder.is_recording():
-                undelivered = self._harness.drain(timeout=10.0)
-                if undelivered:
-                    log.warning("Record queue flush timed out; %d frames discarded", undelivered)
-                    losses["queue_overflows"] += undelivered
-            self._harness.remove_consumer(self._recorder)
-        if self._recorder.is_recording():
-            self._recorder.stop()
+        self._finish_losses = self._loss_counters()
+        recorder, harness = self._recorder, self._harness
+        recorder.request_stop(reason)
+        if harness:
+            harness.remove_consumer(recorder)
+        self._finish_started = time.monotonic()
+        self._status_rec.setText("Stopping recording…")
+        self._recording_panel.record_btn.setEnabled(False)
+
+        def finish() -> None:
+            try:
+                if harness and recorder.is_recording():
+                    undelivered = harness.drain(timeout=_RECORD_DRAIN_TIMEOUT_S)
+                    if undelivered:
+                        self._finish_losses["queue_overflows"] += undelivered
+                        recorder.cancel_pending_io()
+                        recorder.report_error(TimeoutError(
+                            f"Recording flush timed out with {undelivered} frames pending"))
+                # Always take the recorder's lock, including when auto-stop
+                # set is_recording=False but is still finalizing the file.
+                recorder.stop()
+            except Exception as exc:
+                recorder.report_error(exc)
+
+        self._finish_thread = threading.Thread(target=finish, name="recording-finish", daemon=True)
+        self._finish_thread.start()
+        self._finish_timer.start()
+
+    def _poll_recording_finish(self) -> None:
+        if self._finish_thread is None:
+            return
+        if self._finish_thread.is_alive():
+            if time.monotonic() - self._finish_started >= 10:
+                self._status_rec.setText("Still stopping recording; waiting for disk/encoder…")
+            return
+        self._finish_timer.stop()
+        self._finish_thread.join()
+        self._finish_thread = None
+        losses = self._finish_losses
         written = self._recorder.frames_written()
         fps = self._recorder.actual_fps
         offered = self._recorder.frames_offered
@@ -1030,6 +1084,7 @@ class MainWindow(QMainWindow):
         self._rec_meta = None
         self._recorder = None
         self._recording_panel.set_recording(False)
+        self._recording_panel.record_btn.setEnabled(True)
         self._camera_panel.set_recording(False)
         # Queue overflows also show up as sequence gaps at the recorder.
         lost = max(dropped, losses["queue_overflows"]) + (losses["sdk_dropped"] or 0)
@@ -1040,16 +1095,20 @@ class MainWindow(QMainWindow):
             "disk_low": "STOPPED: disk nearly full. ",
             "error": "STOPPED ON ERROR. ",
         }.get(stop_reason, "")
-        self._status_rec.setText(f"{reason_msg}Saved {written} frames ({fps:.1f} fps{drop_msg})")
+        outcome = "Processed" if rec_error else "Saved"
+        self._status_rec.setText(f"{reason_msg}{outcome} {written} frames ({fps:.1f} fps{drop_msg})")
         log.info("Recording finished: %d frames, %.1f fps, %d lost, reason=%s",
                  written, fps, lost, stop_reason or "manual")
         if stop_reason in ("error", "disk_low"):
-            detail = (f"Write failed: {rec_error}" if rec_error
+            detail = (f"Recording failed: {rec_error}" if rec_error
                       else "Free disk space fell below the safety margin.")
             QMessageBox.critical(
                 self, "Recording Stopped",
-                f"Recording stopped after {written} frames.\n\n{detail}\n\n"
-                f"Frames written before the stop were saved.")
+                f"Recording stopped after {written} frames.\n\n{detail}")
+        if self._close_pending:
+            self.close()
+        elif self._disconnect_pending:
+            self._on_disconnect()
 
     def _loss_counters(self) -> dict[str, int | None]:
         """Frame losses since recording started, by where they happened."""
@@ -1235,11 +1294,16 @@ class MainWindow(QMainWindow):
     # --- Cleanup ---
 
     def closeEvent(self, event: object) -> None:
-        save_settings(self._gather_settings())
         if self._recorder is not None:
+            self._close_pending = True
             self._finish_recording()
-        if self._harness and self._harness.is_running():
-            self._harness.stop()
+            event.ignore()
+            return
+        save_settings(self._gather_settings())
+        if self._harness and not self._harness.stop():
+            self._status_rec.setText("Capture is still stopping; close deferred")
+            event.ignore()
+            return
         if self._camera.is_connected():
             self._camera.disconnect()
         super().closeEvent(event)

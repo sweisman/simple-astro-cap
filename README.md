@@ -63,7 +63,7 @@ python run.py --sim
 - Python 3.11+
 - Camera SDK libraries in `lib/` and firmware in `firmware/` (fetched from the vendors by `./scripts/fetch-deps.sh`)
 - USB access to the camera (udev rules required)
-- Optional: ffmpeg for MKV recording
+- Optional: ffmpeg and mkvmerge (mkvtoolnix) for MKV recording
 
 ### Keyboard shortcuts
 
@@ -197,7 +197,7 @@ The QHY SDK has several quirks that required workarounds:
 
 ## Testing needed
 
-- ZWO ASI camera (ASI678MM) — backend written, awaiting hardware test
+- ZWO ASI camera (ASI678MM) — verify capture and recovery on the current build
 - Player One camera — backend written, awaiting hardware test
 - Touptek camera — backend written, awaiting hardware test
 - 16-bit capture mode

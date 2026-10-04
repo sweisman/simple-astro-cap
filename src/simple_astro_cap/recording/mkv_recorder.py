@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import select
 import shutil
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +18,9 @@ from simple_astro_cap.camera.abc import Frame
 from .abc import RecorderBase, check_free_space
 
 log = logging.getLogger(__name__)
+
+_IO_TIMEOUT_S = 10.0
+_REMUX_TIMEOUT_S = 600.0
 
 
 def ffmpeg_available() -> bool:
@@ -46,6 +53,7 @@ class MkvRecorder(RecorderBase):
         self._path: Path | None = None
         self._part_path: Path | None = None
         self._capture_mono_ns: list[int] = []
+        self._stderr = None
 
     def start(self, path: Path, **kwargs: object) -> None:
         width = int(kwargs.get("width", 0))
@@ -82,8 +90,7 @@ class MkvRecorder(RecorderBase):
         cmd = [
             "ffmpeg",
             "-y",                           # overwrite
-            # Keep stderr quiet: it is only drained at stop(), and a full pipe
-            # would block ffmpeg, back up stdin, and hang the worker thread.
+            # Keep the temporary diagnostic file small during long recordings.
             "-hide_banner", "-nostats", "-loglevel", "error",
             "-f", "rawvideo",
             "-pix_fmt", pix_fmt,
@@ -106,12 +113,23 @@ class MkvRecorder(RecorderBase):
 
         cmd.append(str(self._part_path))
 
-        self._proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        # A file cannot fill a stderr pipe and deadlock the encoder. Unbuffered,
+        # nonblocking stdin lets us cancel a stalled write without its lock.
+        self._stderr = tempfile.TemporaryFile()
+        try:
+            self._proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stderr=self._stderr, bufsize=0,
+            )
+            os.set_blocking(self._proc.stdin.fileno(), False)
+        except Exception:
+            if self._proc is not None:
+                self._proc.kill()
+                self._proc.wait(timeout=5)
+                self._proc = None
+            self._stderr.close()
+            self._stderr = None
+            raise
 
         self._begin(
             max_frames=int(max_frames) if max_frames is not None else None,
@@ -126,19 +144,30 @@ class MkvRecorder(RecorderBase):
             if not self._recording:
                 return
             self._recording = False
-            self._close_proc()
-            self._apply_timestamps()
+            try:
+                self._close_proc()
+                self._apply_timestamps()
+            except Exception as exc:
+                previous = f"{self.error}; " if self.error is not None else ""
+                recovery = self.recovery_path
+                detail = f" Recovery file (may be incomplete): {recovery}" if recovery else ""
+                self.report_error(RuntimeError(f"{previous}MKV finalization failed: {exc}.{detail}"))
+                log.error("%s", self.error)
         log.info("MKV recording stopped: %d frames written to %s", self._count, self._path)
 
     @property
     def timestamps_path(self) -> Path | None:
         return self._path.with_suffix(".timestamps.txt") if self._path else None
 
+    @property
+    def recovery_path(self) -> Path | None:
+        return self._part_path if self._part_path and self._part_path.exists() else None
+
     def _apply_timestamps(self) -> None:
         """Write the v2 timestamps file and remux the part file with it."""
         part, final, ts_path = self._part_path, self._path, self.timestamps_path
         if part is None or final is None or ts_path is None or not part.exists():
-            return
+            raise RuntimeError("Encoder did not create its output file")
         if not self._capture_mono_ns:
             part.unlink(missing_ok=True)
             return
@@ -147,20 +176,34 @@ class MkvRecorder(RecorderBase):
         lines += [f"{(t - t0) / 1e6:.6f}" for t in self._capture_mono_ns]
         try:
             ts_path.write_text("\n".join(lines) + "\n")
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 ["mkvmerge", "--quiet", "-o", str(final),
                  "--timestamps", f"0:{ts_path}", str(part)],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
-        except (OSError, subprocess.TimeoutExpired) as e:
-            log.error("Could not apply MKV timestamps (%s); untimed video kept at %s", e, part)
-            return
-        # mkvmerge: 0 = ok, 1 = warnings (output still written), 2 = error
-        if result.returncode >= 2:
-            log.error("mkvmerge failed (%d): %s; untimed video kept at %s",
-                      result.returncode, result.stdout.decode(errors="replace")[-500:], part)
+            deadline = time.monotonic() + _REMUX_TIMEOUT_S
+            try:
+                while True:
+                    if self._cancel_io.is_set() or time.monotonic() >= deadline:
+                        raise TimeoutError("MKV remux cancelled or timed out")
+                    try:
+                        output, _ = proc.communicate(timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate(timeout=5)
+            # mkvmerge: 0 = ok, 1 = warnings, everything else is failure.
+            if proc.returncode not in (0, 1):
+                raise RuntimeError(f"mkvmerge exited {proc.returncode}: "
+                                   f"{output.decode(errors='replace')[-500:]}")
+            if not final.exists():
+                raise RuntimeError("mkvmerge did not create the final file")
+        except Exception:
             final.unlink(missing_ok=True)
-            return
+            raise
         part.unlink(missing_ok=True)
 
     def _close_proc(self) -> None:
@@ -170,23 +213,46 @@ class MkvRecorder(RecorderBase):
             return
         try:
             if proc.stdin is not None:
+                proc.stdin.close()  # unbuffered: no blocking flush
+            deadline = time.monotonic() + _IO_TIMEOUT_S
+            while proc.poll() is None:
+                if self._cancel_io.is_set() or time.monotonic() >= deadline:
+                    raise TimeoutError("ffmpeg shutdown cancelled or timed out")
                 try:
-                    proc.stdin.close()
-                except BrokenPipeError:
-                    pass
-            proc.wait(timeout=10)
+                    proc.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    continue
             if proc.returncode != 0:
-                stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-                log.warning("ffmpeg exited with code %d: %s", proc.returncode, stderr[-500:])
-        except Exception as e:
-            log.warning("Error closing ffmpeg: %s", e)
-            proc.kill()
-            proc.wait(timeout=5)
+                stderr = ""
+                if self._stderr is not None:
+                    self._stderr.seek(0, os.SEEK_END)
+                    self._stderr.seek(max(0, self._stderr.tell() - 500))
+                    stderr = self._stderr.read().decode(errors="replace")
+                raise RuntimeError(f"ffmpeg exited {proc.returncode}: {stderr}")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+            if self._stderr is not None:
+                self._stderr.close()
+                self._stderr = None
 
     def _write_frame(self, frame: Frame) -> None:
         if self._proc is None or self._proc.stdin is None:
-            return
-        # A broken pipe (ffmpeg died, e.g. disk full) propagates as OSError;
-        # RecorderBase puts the recorder into its error state.
-        self._proc.stdin.write(memoryview(np.ascontiguousarray(frame.data)))
+            raise RuntimeError("ffmpeg is not running")
+        data = memoryview(np.ascontiguousarray(frame.data)).cast("B")
+        fd = self._proc.stdin.fileno()
+        deadline = time.monotonic() + _IO_TIMEOUT_S
+        while data:
+            if self._cancel_io.is_set() or time.monotonic() >= deadline:
+                raise TimeoutError("ffmpeg frame write cancelled or timed out")
+            if not select.select([], [fd], [], 0.1)[1]:
+                continue
+            try:
+                written = os.write(fd, data)
+            except BlockingIOError:
+                continue
+            if written == 0:
+                raise BrokenPipeError("ffmpeg accepted no frame data")
+            data = data[written:]
         self._capture_mono_ns.append(frame.capture_mono_ns)

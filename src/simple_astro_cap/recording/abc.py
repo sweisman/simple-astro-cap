@@ -51,7 +51,7 @@ class RecorderBase(FrameConsumer):
     """
 
     def __init__(self) -> None:
-        # Held across on_frame (worker thread) and stop() (GUI thread) so a
+        # Held across on_frame and background finalization so a
         # frame write can never interleave with finalising the file. RLock
         # because on_frame calls stop() for auto-stop.
         self._lock = threading.RLock()
@@ -60,8 +60,11 @@ class RecorderBase(FrameConsumer):
         self._max_frames: int | None = None
         self._max_duration: float = 0.0
         self._target_fps: float = 0.0
-        self._min_interval: float = 0.0
-        self._last_accept_time: float = 0.0
+        self._min_interval_ns = 0
+        self._last_accept_ns: int | None = None
+        self._capture_deadline_ns: int | None = None
+        self._stop_capture_ns: int | None = None
+        self._cancel_io = threading.Event()
         self._rec_start_time: float = 0.0
         self._frames_offered: int = 0
         self._first_sequence: int = -1
@@ -108,6 +111,26 @@ class RecorderBase(FrameConsumer):
             return 0.0
         return time.monotonic() - self._rec_start_time
 
+    def duration_expired(self) -> bool:
+        """The GUI also checks this so a camera producing no frames can stop."""
+        return (self._capture_deadline_ns is not None
+                and time.monotonic_ns() >= self._capture_deadline_ns)
+
+    def request_stop(self, reason: str = "") -> None:
+        """Freeze the capture window without waiting for a writer lock."""
+        if self._stop_capture_ns is None:
+            self._stop_capture_ns = time.monotonic_ns()
+        if reason and not self._stop_reason:
+            self._stop_reason = reason
+
+    def cancel_pending_io(self) -> None:
+        """Ask cancellable I/O to exit; never acquire the writer lock here."""
+        self._cancel_io.set()
+
+    def report_error(self, exc: BaseException) -> None:
+        self._error = exc
+        self._stop_reason = "error"
+
     def _begin(self, *, max_frames: int | None = None,
                max_duration: float = 0.0,
                target_fps: float = 0.0,
@@ -122,9 +145,14 @@ class RecorderBase(FrameConsumer):
         self._max_frames = max_frames
         self._max_duration = max_duration
         self._target_fps = target_fps
-        self._min_interval = (1.0 / target_fps) if target_fps > 0 else 0.0
-        self._last_accept_time = 0.0
-        self._rec_start_time = time.monotonic()
+        self._min_interval_ns = round(1e9 / target_fps) if target_fps > 0 else 0
+        self._last_accept_ns = None
+        start_ns = time.monotonic_ns()
+        self._rec_start_time = start_ns / 1e9
+        self._capture_deadline_ns = (start_ns + round(max_duration * 1e9)
+                                     if max_duration > 0 else None)
+        self._stop_capture_ns = None
+        self._cancel_io.clear()
         self._frames_offered = 0
         self._first_sequence = -1
         self._last_sequence = -1
@@ -168,35 +196,47 @@ class RecorderBase(FrameConsumer):
         with self._lock:
             if not self._recording:
                 return
-            if self._max_frames is not None and self._count >= self._max_frames:
-                self._stop_reason = "frame_limit"
-                self.stop()
-                return
-            if self._max_duration > 0 and self.elapsed >= self._max_duration:
-                self._stop_reason = "time_limit"
-                self.stop()
-                return
-            self._frames_offered += 1
-            if self._first_sequence < 0:
-                self._first_sequence = frame.sequence
-            self._last_sequence = frame.sequence
-            if self._min_interval > 0:
-                now = time.monotonic()
-                if (now - self._last_accept_time) < self._min_interval:
-                    return
-                self._last_accept_time = now
-            if self._space_path is not None and self._space_low():
-                log.error("Free space below %d MB; stopping recording",
-                          MIN_FREE_BYTES // (1024 * 1024))
-                self._stop_reason = "disk_low"
-                self.stop()
-                return
             try:
-                self._write_frame(frame)
+                self._accept_frame(frame)
             except Exception as exc:
                 self._fail(exc)
+
+    def _accept_frame(self, frame: Frame) -> None:
+        if self._cancel_io.is_set():
+            return
+        # Manual stop excludes later captures but still flushes the earlier
+        # queue. Duration/FPS decisions must not depend on disk speed.
+        captured = frame.capture_mono_ns
+        if self._stop_capture_ns is not None and captured >= self._stop_capture_ns:
+            return
+        if self._max_frames is not None and self._count >= self._max_frames:
+            self._stop_reason = self._stop_reason or "frame_limit"
+            self.stop()
+            return
+        if self._capture_deadline_ns is not None and captured >= self._capture_deadline_ns:
+            self._stop_reason = self._stop_reason or "time_limit"
+            self.stop()
+            return
+        self._frames_offered += 1
+        if self._first_sequence < 0:
+            self._first_sequence = frame.sequence
+        self._last_sequence = frame.sequence
+        if self._min_interval_ns > 0:
+            if (self._last_accept_ns is not None
+                    and captured - self._last_accept_ns < self._min_interval_ns):
                 return
-            self._count += 1
+            self._last_accept_ns = captured
+        if self._space_path is not None and self._space_low():
+            log.error("Free space below %d MB; stopping recording",
+                      MIN_FREE_BYTES // (1024 * 1024))
+            self._stop_reason = "disk_low"
+            self.stop()
+            return
+        self._write_frame(frame)
+        self._count += 1
+        if self._max_frames is not None and self._count >= self._max_frames:
+            self._stop_reason = self._stop_reason or "frame_limit"
+            self.stop()
 
     def _space_low(self) -> bool:
         now = time.monotonic()
@@ -211,8 +251,7 @@ class RecorderBase(FrameConsumer):
     def _fail(self, exc: BaseException) -> None:
         """Enter the error state: remember why, finalise what was written."""
         log.error("Recording write failed after %d frames: %s", self._count, exc)
-        self._error = exc
-        self._stop_reason = "error"
+        self.report_error(exc)
         try:
             self.stop()
         except Exception:

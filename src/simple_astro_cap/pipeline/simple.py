@@ -45,7 +45,7 @@ class SimpleHarness(FrameProducer):
         self._capture: threading.Thread | None = None
         self._writer: threading.Thread | None = None
 
-        self._queue: collections.deque[Frame] = collections.deque()
+        self._queue: collections.deque[tuple[Frame, tuple[FrameConsumer, ...]]] = collections.deque()
         self._queue_cv = threading.Condition()
         self._queue_bytes = 0
         self._queue_limit = queue_bytes
@@ -75,6 +75,8 @@ class SimpleHarness(FrameProducer):
     def start(self) -> None:
         if self._running.is_set():
             return
+        if any(t is not None and t.is_alive() for t in (self._capture, self._writer)):
+            raise RuntimeError("Previous capture/writer thread is still stopping")
         self.error = None
         self._camera.start_live()
         self._running.set()
@@ -84,16 +86,19 @@ class SimpleHarness(FrameProducer):
         self._capture.start()
         log.info("Harness started")
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
         if self._capture is None and self._writer is None:
-            return
+            return True
         self._running.clear()
         with self._queue_cv:
             self._queue_cv.notify_all()
         capture_alive = self._join(self._capture)
         # Writer finishes the queue before exiting; give it the same budget.
-        self._join(self._writer)
-        self._capture = self._writer = None
+        writer_alive = self._join(self._writer)
+        if not capture_alive:
+            self._capture = None
+        if not writer_alive:
+            self._writer = None
         if capture_alive:
             # Stopping the SDK under a thread still inside an SDK call can
             # crash the vendor library; leave it live and report instead.
@@ -101,9 +106,13 @@ class SimpleHarness(FrameProducer):
                 "Capture thread did not exit; camera left running — reconnect required")
             log.error("Capture thread still alive after %.0fs; not calling stop_live()",
                       _JOIN_GIVE_UP_S)
-            return
+            return False
         self._camera.stop_live()
+        if writer_alive:
+            self.error = self.error or RuntimeError("Writer thread is still stopping")
+            return False
         log.info("Harness stopped")
+        return True
 
     @staticmethod
     def _join(thread: threading.Thread | None) -> bool:
@@ -149,14 +158,14 @@ class SimpleHarness(FrameProducer):
                     continue
                 with self._lock:
                     inline = list(self._inline)
-                    has_queued = bool(self._queued)
+                    queued = tuple(self._queued)
                 for consumer in inline:
                     try:
                         consumer.on_frame(frame)
                     except Exception:
                         log.exception("Consumer %s failed on frame %d", consumer, frame.sequence)
-                if has_queued:
-                    self._enqueue(frame)
+                if queued:
+                    self._enqueue(frame, queued)
         except Exception as exc:
             log.exception("Frame capture thread crashed")
             self.error = exc
@@ -165,7 +174,10 @@ class SimpleHarness(FrameProducer):
             with self._queue_cv:
                 self._queue_cv.notify_all()
 
-    def _enqueue(self, frame: Frame) -> None:
+    def _enqueue(self, frame: Frame, consumers: tuple[FrameConsumer, ...] | None = None) -> None:
+        if consumers is None:
+            with self._lock:
+                consumers = tuple(self._queued)
         nbytes = frame.data.nbytes
         with self._queue_cv:
             if self._queue_bytes + nbytes > self._queue_limit:
@@ -175,7 +187,9 @@ class SimpleHarness(FrameProducer):
                                 self._queue_bytes // (1024 * 1024), frame.sequence,
                                 self.queue_overflows)
                 return
-            self._queue.append(frame)
+            # Keep ownership with the original recording, even if another
+            # recording starts before the writer has emptied its backlog.
+            self._queue.append((frame, consumers))
             self._queue_bytes += nbytes
             self._enqueued_total += 1
             self.queue_peak_bytes = max(self.queue_peak_bytes, self._queue_bytes)
@@ -189,11 +203,9 @@ class SimpleHarness(FrameProducer):
                 if not self._queue:
                     self._queue_cv.notify_all()
                     return  # stopped and drained
-                frame = self._queue.popleft()
+                frame, queued = self._queue.popleft()
                 self._queue_bytes -= frame.data.nbytes
             try:
-                with self._lock:
-                    queued = list(self._queued)
                 for consumer in queued:
                     try:
                         consumer.on_frame(frame)

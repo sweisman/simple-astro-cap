@@ -420,13 +420,9 @@ class AsiCamera(CameraBase):
         sdk = self._get_sdk()
         bpp = 2 if self._bit_depth == 16 else 1
         buf_size = self._roi.width * self._roi.height * bpp
-        try:
-            ok = sdk.get_video_data(self._camera_id, self._frame_buf, buf_size, timeout_ms)
-        except AsiError as e:
-            # e.g. camera unplugged: don't let the harness thread die silently
-            log.warning("ASIGetVideoData failed: %s", e)
-            time.sleep(0.1)
-            return None
+        # The SDK wrapper returns False for ordinary timeouts. Fatal errors
+        # (including removal) must reach the harness and stop the recording.
+        ok = sdk.get_video_data(self._camera_id, self._frame_buf, buf_size, timeout_ms)
         if not ok:
             return None
         return self._make_frame(self._roi.width, self._roi.height, self._bit_depth)

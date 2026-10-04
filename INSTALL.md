@@ -9,7 +9,7 @@
 ### Supported Cameras
 
 - **QHY** cameras (tested: QHY5III585M)
-- **ZWO ASI** cameras (tested: ASI678MM)
+- **ZWO ASI** cameras (including ASI678MM)
 - **Player One** cameras
 - **Touptek** cameras
 
@@ -91,11 +91,10 @@ official udev rules, and the GPLv2 source for `fxload`. The extracted SDK stays 
 
 ### Player One and Touptek
 
-These two backends resolve their library through `ctypes.util.find_library()` rather than
-the project's `lib/` directory, so the supported path is a system-wide install using the
-vendor's own installer. If you would rather keep them project-local, download the Linux
-SDK archive by hand into `vendor-cache/` and re-run `fetch-deps.sh` — it will find and
-unpack it.
+These two backends first look in the project's `lib/` directory, then fall back to
+system libraries through `ctypes.util.find_library()`. Use the vendor's installer
+for a system-wide installation, or download the Linux SDK archive by hand into
+`vendor-cache/` and re-run `fetch-deps.sh` to unpack project-local libraries.
 
 Touptek OEMs cameras under many brand names (Altair, Omegon, Bresser, Celestron, …) —
 these all use the same SDK and the same udev rules.
@@ -278,7 +277,7 @@ this project.
 |-----------|-----|---------|------------|---------|-----------|
 | Python 3.11+ | Required | Required | Required | Required | Required |
 | PySide6, NumPy, Pillow | Required | Required | Required | Required | Required |
-| SDK library in `lib/` | Required | Required | System install | System install | Not needed |
+| SDK library | `lib/` | `lib/` | `lib/` or system install | `lib/` or system install | Not needed |
 | udev rules | Required | Required | Required | Required | Not needed |
 | fxload | Required | Not needed | Not needed | Not needed | Not needed |
 | Firmware files | Required | Not needed | Not needed | Not needed | Not needed |

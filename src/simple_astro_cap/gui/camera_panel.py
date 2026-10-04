@@ -497,8 +497,9 @@ class CameraPanel(QGroupBox):
         hdr_on = self.hdr_check.isChecked()
         usable = self._connected and not self._recording
         self.bin_combo.setEnabled(usable and not hdr_on)
-        self.auto_exposure_check.setEnabled(self._auto_exposure_supported and not hdr_on)
-        self.auto_gain_check.setEnabled(self._auto_gain_supported and not hdr_on)
+        self.auto_exposure_check.setEnabled(usable and self._auto_exposure_supported and not hdr_on)
+        self.auto_gain_check.setEnabled(usable and self._auto_gain_supported and not hdr_on)
+        self.soft_auto_exposure_check.setEnabled(usable)
 
         # QHY: "In Linearity HDR mode, the Gain and Offset values are set by
         # default and do not need to be adjusted. Any Gain and Offset settings
