@@ -54,7 +54,7 @@ def test_slow_recorder_never_stalls_capture_and_overflow_is_counted():
     # 200 frames through a 20 ms/frame writer would take 4 s if capture blocked.
     assert cam.polls_done.wait(1.0), "capture thread was blocked by the recorder"
     assert inline.seqs == list(range(1, 201))  # inline path sees every frame
-    assert harness.drain(timeout=5.0)
+    assert harness.drain(timeout=5.0) == 0
     harness.stop()
     assert harness.queue_overflows > 0
     # Every frame is either written or counted as overflow — nothing silent.
@@ -86,4 +86,18 @@ def test_capture_crash_clears_running_and_reports_error():
         time.sleep(0.01)
     assert not harness.is_running()
     assert isinstance(harness.error, RuntimeError)
+    harness.stop()
+
+
+def test_drain_terminates_while_capture_keeps_overflowing():
+    cam = FakeCamera(total=10**9)  # never stops producing
+    harness = SimpleHarness(cam, queue_bytes=10 * 64 * 64 * 2)
+    rec = Collect(delay=0.02)
+    harness.add_consumer(rec, queued=True)
+    harness.start()
+    time.sleep(0.3)
+    t0 = time.monotonic()
+    assert harness.drain(timeout=5.0) == 0  # only waits for frames queued before the call
+    assert time.monotonic() - t0 < 1.0
+    harness.remove_consumer(rec)
     harness.stop()

@@ -49,7 +49,8 @@ class SimpleHarness(FrameProducer):
         self._queue_cv = threading.Condition()
         self._queue_bytes = 0
         self._queue_limit = queue_bytes
-        self._writing = False  # writer is mid-dispatch (for drain())
+        self._enqueued_total = 0    # frames ever queued (for drain())
+        self._dispatched_total = 0  # frames the writer has finished with
         self.queue_overflows = 0
         self.queue_peak_bytes = 0
         self.error: BaseException | None = None
@@ -121,20 +122,24 @@ class SimpleHarness(FrameProducer):
     def queue_fill_bytes(self) -> int:
         return self._queue_bytes
 
-    def drain(self, timeout: float = 30.0) -> bool:
-        """Block until every queued frame has been dispatched.
+    def drain(self, timeout: float = 30.0) -> int:
+        """Block until every frame queued *before this call* is dispatched.
 
         Call before stopping a recorder so frames captured before the stop
-        request still reach it. Returns False on timeout.
+        request still reach it. Frames captured afterwards are not waited
+        for, so this terminates even while the queue is overflowing.
+        Returns how many of those earlier frames were still undelivered
+        when it gave up (0 on success).
         """
         deadline = time.monotonic() + timeout
         with self._queue_cv:
-            while self._queue or self._writing:
+            target = self._enqueued_total
+            while self._dispatched_total < target:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or self._writer is None or not self._writer.is_alive():
-                    return not (self._queue or self._writing)
+                    break
                 self._queue_cv.wait(remaining)
-        return True
+            return max(0, target - self._dispatched_total)
 
     def _run_capture(self) -> None:
         try:
@@ -172,6 +177,7 @@ class SimpleHarness(FrameProducer):
                 return
             self._queue.append(frame)
             self._queue_bytes += nbytes
+            self._enqueued_total += 1
             self.queue_peak_bytes = max(self.queue_peak_bytes, self._queue_bytes)
             self._queue_cv.notify_all()
 
@@ -185,7 +191,6 @@ class SimpleHarness(FrameProducer):
                     return  # stopped and drained
                 frame = self._queue.popleft()
                 self._queue_bytes -= frame.data.nbytes
-                self._writing = True
             try:
                 with self._lock:
                     queued = list(self._queued)
@@ -196,5 +201,5 @@ class SimpleHarness(FrameProducer):
                         log.exception("Consumer %s failed on frame %d", consumer, frame.sequence)
             finally:
                 with self._queue_cv:
-                    self._writing = False
+                    self._dispatched_total += 1
                     self._queue_cv.notify_all()

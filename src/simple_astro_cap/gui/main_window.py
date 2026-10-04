@@ -995,11 +995,17 @@ class MainWindow(QMainWindow):
         """Clean up after recording ends (manual stop or auto-stop)."""
         if self._recorder is None:
             return
+        # Snapshot losses at the stop request: overflow while flushing the
+        # queue below belongs to frames after the recording ended.
+        losses = self._loss_counters()
         if self._harness:
             # Frames captured before the stop request are still queued;
             # let them reach the file before closing it.
-            if self._recorder.is_recording() and not self._harness.drain():
-                log.warning("Record queue did not drain; remaining frames discarded")
+            if self._recorder.is_recording():
+                undelivered = self._harness.drain(timeout=10.0)
+                if undelivered:
+                    log.warning("Record queue flush timed out; %d frames discarded", undelivered)
+                    losses["queue_overflows"] += undelivered
             self._harness.remove_consumer(self._recorder)
         if self._recorder.is_recording():
             self._recorder.stop()
@@ -1009,7 +1015,6 @@ class MainWindow(QMainWindow):
         dropped = self._recorder.frames_dropped
         stop_reason = self._recorder.stop_reason
         rec_error = self._recorder.error
-        losses = self._loss_counters()
 
         # Advance session sequence: PNG uses one per frame, SER/MKV use one per session
         is_png = isinstance(self._recorder, PngRecorder)
