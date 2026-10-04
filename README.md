@@ -12,10 +12,11 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Live camera view** with dynamic zoom from fit-to-viewport through 100%, with scroll bars at higher zoom levels
 - **Keyboard-centric controls** — field navigation, exposure/gain/zoom adjustment, capture, and recording all driven by keyboard
 - **Smart exposure stepping** — automatic unit switching (µs ±10, ms ±0.25/±1, s ±0.25) with seamless transitions at boundaries; finer 0.25ms steps in the 1–10ms range
-- **Portrait/landscape orientation** — toggle frame rotation, affects both display and recordings
+- **Portrait/landscape orientation** — rotates the live view only; recordings and snapshots always keep native sensor orientation (so Bayer metadata stays valid)
 - **PNG/TIFF, SER, and MKV recording** — single-frame snapshots (PNG or TIFF), multi-frame sequences, or lossless video
-- **SER file format** — standard free-astro.org format with timestamps and metadata, compatible with stacking software like AutoStakkert and RegiStax
-- **MKV video** — lossless FFV1 encoding via ffmpeg (8/16-bit mono, metadata embedded)
+- **SER file format** — standard free-astro.org format with per-frame capture timestamps and metadata, compatible with stacking software like AutoStakkert and RegiStax
+- **MKV video** — lossless FFV1 encoding via ffmpeg (8/16-bit mono, metadata embedded); `mkvmerge` applies each frame's real capture time, and the timestamps are also kept in a `.timestamps.txt` sidecar
+- **Capture timestamps** — every frame is stamped (monotonic + UTC) the moment the SDK hands it over, before any disk I/O; SER trailers, PNG `CaptureUTC` and MKV timestamps all use that stamp. It marks readout completion as seen by the host, not exposure midpoint
 - **Recording limits** — set time (seconds), frame count, or both; when both are set, FPS is derived automatically to fit frames into the time window
 - **Session metadata** — each recording session writes a `.txt` summary (start/end time, frames, FPS, exposure, gain, etc.)
 - **8-bit and 16-bit capture** — selectable before connecting
@@ -28,8 +29,10 @@ Most astronomy camera applications are designed for full astrophotography setups
 - **Brightness/contrast controls** — display-only adjustments (keyboard B/C to focus, left/right to adjust)
 - **Histogram** — toggleable live histogram in sidebar
 - **Battery saver mode** — throttles display to 1 fps during recording to reduce CPU/GPU load on small field devices; checkbox enabled only while recording, state persisted
-- **Recording locks** — only zoom, exposure, and gain are adjustable during recording; all other settings locked
-- **Frame drop detection** — sequence gap analysis reported in session `.txt` and status bar
+- **Recording locks** — only zoom, orientation (display-only), exposure, and gain are adjustable during recording; all other settings locked. Exposure/gain/offset changes made while recording are logged with UTC timestamps in the session `.txt`
+- **Frame loss accounting** — losses are counted where they happen and reported in the status bar (`LOST n`) and session `.txt`: inside the SDK/camera (ASI `ASIGetDroppedFrames`, Touptek SDK frame-sequence gaps, Player One `POAGetDroppedImagesCount`; `n/a` for QHY, whose SDK exposes no counter), record-queue overflow (disk not keeping up), and host-side sequence gaps
+- **Record queue** — recorders run on their own writer thread behind a bounded RAM queue (`record_queue_mb` in settings, default 1024), so disk stalls never stop camera polling; on stop, queued frames are flushed before the file is closed
+- **Recording failure handling** — free space is checked before and during recording (stops cleanly below 512 MB); a write error (e.g. disk full) stops the recording, finalises the file with the frames already written, and shows an error dialog
 - **Raw Bayer metadata** — color cameras record raw (un-debayered) data with correct Bayer pattern metadata in SER headers, PNG/TIFF tags, MKV metadata, and session summaries; stacking software can debayer after the fact
 - **Viewport downsampling** — automatic decimation at all sub-100% zoom levels for efficient display
 - **Simulator backend** — test the GUI without a physical camera (`--sim` flag)
@@ -73,7 +76,7 @@ python run.py --sim
 | `C` | Focus contrast control |
 | `Up` / `Down` | Navigate to previous / next field |
 | `Left` / `Right` | Decrease / increase focused value |
-| `Space` | Capture single frame (PNG) |
+| `Space` | Snapshot the next frame acquired after the keypress (PNG/TIFF) |
 | `R` | Start / stop recording |
 | `Ctrl+X` | Toggle auto-exposure |
 | `Ctrl+G` | Toggle auto-gain |
@@ -90,18 +93,21 @@ MultiCamera (aggregates QHY + ZWO + Player One + Touptek backends)
 Camera (QHY / ZWO ASI / Player One / Touptek SDK via ctypes, or Simulator)
   |
   v
-SimpleHarness (worker thread polls camera, dispatches frames)
-  |  frame_transform (optional rotation for portrait mode)
+SimpleHarness
+  |  capture thread: get frame (backend copies + stamps it), nothing else
   |
-  +---> DisplayBridge (QObject, emits Qt signal for thread-safe GUI update)
-  |       |
-  |       v
-  |     LiveViewWidget (QScrollArea + inner image widget, dynamic zoom)
+  +---> inline consumers (must be cheap)
+  |       DisplayBridge: one-frame mailbox -> Qt signal -> LiveViewWidget
+  |                      (portrait rotation, zoom, brightness applied here)
+  |       SoftwareAutoExposure (throttled)
   |
-  +---> Recorder (PngRecorder, SerRecorder, or MkvRecorder)
+  +---> bounded record queue (byte budget; overflow counted)
+          |
+          v  writer thread
+        Recorder (PngRecorder, SerRecorder, or MkvRecorder)
 ```
 
-The camera layer is abstracted behind `CameraBase` (ABC). A `MultiCamera` aggregator discovers cameras from all available backends and delegates to the appropriate one. The pipeline uses a simple worker thread that polls the camera, applies an optional frame transform (e.g., 90° rotation for portrait mode), and dispatches `Frame` objects to registered consumers. The `DisplayBridge` converts worker-thread callbacks into Qt signals so the GUI updates happen safely on the main thread.
+The camera layer is abstracted behind `CameraBase` (ABC). A `MultiCamera` aggregator discovers cameras from all available backends and delegates to the appropriate one. The capture thread polls the camera and hands each `Frame` to inline consumers and to the record queue; a separate writer thread feeds recorders, so disk I/O never blocks acquisition. The `DisplayBridge` is a latest-frame mailbox: at most one GUI update is pending at a time, so a slow GUI drops display frames instead of queueing them.
 
 ### Module layout
 
@@ -161,13 +167,14 @@ JSON at `~/.config/simple-astro-cap/settings.json`. Camera is never persisted �
 - `from __future__ import annotations` in every module
 - Exposure values always in microseconds internally; display conversion in `util/units.py`
 - Camera backends use ctypes to native SDK shared libraries in `lib/` (fetched by `scripts/fetch-deps.sh`)
-- No test suite — verify changes with `python -m py_compile` on all modified files
+- Tests: `python -m pytest tests/` (no hardware needed; MKV tests skip without ffmpeg/mkvmerge)
 
 ### Key patterns
 
 - **Camera lifecycle**: Never open+close a QHY camera handle during enumeration — it corrupts USB state. The `pre_open` pattern keeps the handle alive for reuse on `connect()`.
 - **Signal blocking**: Always use `blockSignals(True/False)` when programmatically setting Qt widget values to prevent recursive signal chains.
-- **Thread safety**: Camera polling runs on a worker thread (`SimpleHarness`). GUI updates must go through `DisplayBridge` (QObject signal). Recorders receive frames on the worker thread.
+- **Thread safety**: Camera polling runs on the capture thread (`SimpleHarness`); recorders run on the writer thread (`add_consumer(..., queued=True)`). GUI updates must go through `DisplayBridge`. Anything added as an inline consumer runs on the capture thread and must not block.
+- **Frame time**: use `Frame.capture_mono_ns` for intervals and `Frame.capture_utc_ns` for provenance; never take "now" at write time.
 - **Recording gating**: `RecorderBase.on_frame()` handles FPS throttling, max-frames, and max-duration auto-stop. Subclasses only implement `_write_frame()`.
 - **Sequence numbers**: `snap_sequence` and `session_sequence` in settings are monotonically increasing and never reset.
 
@@ -201,7 +208,8 @@ The QHY SDK has several quirks that required workarounds:
 - [ ] USB traffic control (currently hardcoded to 30)
 - [ ] ROI display overlay on live view
 - [ ] Crosshair overlay for focusing
-- [ ] High-performance ring buffer pipeline — decouples camera polling from disk I/O via a pre-allocated circular buffer on separate threads, absorbing brief I/O stalls without dropping frames. Unlikely to be needed for most astro cameras on SSD storage at 8-bit; current simple pipeline handles full-resolution 40+ FPS to SER without issues. Consider only if frame drop detection reports losses in practice.
+- [ ] Confirm SDK drop counters on real hardware (ASI678MM via `ASIGetDroppedFrames`; Player One/Touptek untested)
+- [ ] SER `LittleEndian=0` interop check: open 16-bit test files in Siril, SER Player and AutoStakkert (0 follows the de-facto convention, opposite to the spec text)
 - [ ] Color camera display support (debayering) — raw Bayer recording already works
 
 ### Adding color camera support

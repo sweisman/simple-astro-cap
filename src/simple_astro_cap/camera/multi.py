@@ -249,3 +249,9 @@ class MultiCamera(CameraBase):
 
     def is_live(self) -> bool:
         return self._active is not None and self._active.is_live()
+
+    def sdk_dropped_frames(self) -> int | None:
+        # No self._lock: the capture thread holds it across get_live_frame()
+        # for up to its timeout, and this is polled from the GUI thread.
+        active = self._active
+        return active.sdk_dropped_frames() if active is not None else None

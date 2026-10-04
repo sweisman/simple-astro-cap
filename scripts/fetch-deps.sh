@@ -72,9 +72,9 @@ done
 
 mkdir -p "$CACHE_DIR" "$LIB_DIR"
 
-# download <url> <dest-file> <expected-sha256-or-empty>
+# download <url> <dest-file> <expected-sha256-or-empty> [allow-unpinned]
 download() {
-    local url="$1" dest="$2" sha="$3"
+    local url="$1" dest="$2" sha="$3" allow_unpinned="${4:-0}"
 
     if [[ -f "$dest" && $FORCE -eq 0 ]]; then
         log "Using cached $(basename "$dest")"
@@ -93,8 +93,11 @@ download() {
   expected $sha
   actual   $actual
 If the vendor published a new build, update the *_SHA256 in scripts/deps.conf."
+    elif [[ "$allow_unpinned" == "1" ]]; then
+        warn "No checksum pinned for $(basename "$dest") (opted out in deps.conf) — integrity not verified"
     else
-        warn "No checksum pinned for $(basename "$dest") — integrity not verified"
+        die "No checksum pinned for $(basename "$dest"). Set its *_SHA256 in scripts/deps.conf
+(or *_ALLOW_UNPINNED=1 if the vendor makes pinning impossible)."
     fi
 }
 
@@ -116,7 +119,7 @@ fetch_qhy() {
     local tarball="$CACHE_DIR/sdk_linux64_${QHY_VERSION}.tgz"
     local sdk_dir="$CACHE_DIR/sdk_linux64_${QHY_VERSION}"
 
-    download "$QHY_URL" "$tarball" "$QHY_SHA256"
+    download "$QHY_URL" "$tarball" "$QHY_SHA256" "${QHY_ALLOW_UNPINNED:-0}"
 
     rm -rf "$sdk_dir"
     tar xzf "$tarball" -C "$CACHE_DIR"
@@ -165,7 +168,7 @@ fetch_asi() {
     local work="$CACHE_DIR/asi"
 
     warn "The ZWO archive is ~112 MB (it bundles every platform)."
-    download "$ASI_URL" "$zipfile" "$ASI_SHA256"
+    download "$ASI_URL" "$zipfile" "$ASI_SHA256" "${ASI_ALLOW_UNPINNED:-0}"
 
     rm -rf "$work"; mkdir -p "$work"
     unzip -q -o "$zipfile" -d "$work"

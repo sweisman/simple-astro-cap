@@ -243,25 +243,28 @@ install rules that may be malformed. Please report this with your checkout path.
     log "QHY: $n firmware rules covering QHYCCD's full supported model list"
 }
 
+# TAG+="uaccess" grants the logged-in local user access via an ACL; it must be
+# set before systemd's 73-seat-late.rules, hence the 70- prefix. MODE 0660
+# keeps the device closed to other (e.g. remote/service) accounts.
 generate_others() {
-    printf '%s\n' "$HEADER" > "$STAGE/99-asi.rules"
-    cat >> "$STAGE/99-asi.rules" <<'EOF'
+    printf '%s\n' "$HEADER" > "$STAGE/70-asi.rules"
+    cat >> "$STAGE/70-asi.rules" <<'EOF'
 ACTION=="add", ATTR{idVendor}=="03c3", RUN+="/bin/sh -c '/bin/echo 200 >/sys/module/usbcore/parameters/usbfs_memory_mb'"
-SUBSYSTEMS=="usb", ATTR{idVendor}=="03c3", MODE="0666"
+SUBSYSTEMS=="usb", ATTR{idVendor}=="03c3", MODE="0660", TAG+="uaccess"
 EOF
 
-    printf '%s\n' "$HEADER" > "$STAGE/99-playerone.rules"
-    cat >> "$STAGE/99-playerone.rules" <<'EOF'
+    printf '%s\n' "$HEADER" > "$STAGE/70-playerone.rules"
+    cat >> "$STAGE/70-playerone.rules" <<'EOF'
 ACTION=="add", ATTR{idVendor}=="a0a0", RUN+="/bin/sh -c '/bin/echo 200 >/sys/module/usbcore/parameters/usbfs_memory_mb'"
-SUBSYSTEMS=="usb", ATTR{idVendor}=="a0a0", MODE="0666"
+SUBSYSTEMS=="usb", ATTR{idVendor}=="a0a0", MODE="0660", TAG+="uaccess"
 EOF
 
     # Touptek OEMs under many brands (Altair, Omegon, Bresser, Celestron, ...);
     # they all present the same vendor IDs.
-    printf '%s\n' "$HEADER" > "$STAGE/99-touptek.rules"
-    cat >> "$STAGE/99-touptek.rules" <<'EOF'
-SUBSYSTEMS=="usb", ATTR{idVendor}=="0547", MODE="0666"
-SUBSYSTEMS=="usb", ATTR{idVendor}=="04b4", MODE="0666"
+    printf '%s\n' "$HEADER" > "$STAGE/70-touptek.rules"
+    cat >> "$STAGE/70-touptek.rules" <<'EOF'
+SUBSYSTEMS=="usb", ATTR{idVendor}=="0547", MODE="0660", TAG+="uaccess"
+SUBSYSTEMS=="usb", ATTR{idVendor}=="04b4", MODE="0660", TAG+="uaccess"
 EOF
 
     log "ASI / Player One / Touptek: permission rules generated"
@@ -288,6 +291,14 @@ fi
 for f in "$STAGE"/*.rules; do
     install -m 0644 "$f" "$RULES_DIR/$(basename "$f")"
     log "Installed $RULES_DIR/$(basename "$f")"
+done
+
+# Earlier versions installed world-writable (0666) rules as 99-*.rules.
+for old in 99-asi.rules 99-playerone.rules 99-touptek.rules; do
+    if [[ -f "$RULES_DIR/$old" ]]; then
+        rm -f "$RULES_DIR/$old"
+        log "Removed superseded $RULES_DIR/$old"
+    fi
 done
 
 udevadm control --reload-rules

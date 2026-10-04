@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
+from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI, stamp_now
 
 _SIM_INFO = CameraInfo(
     camera_id="SIM-001",
@@ -253,6 +253,7 @@ class SimCamera(CameraBase):
         return self._live
 
     def _generate_frame(self) -> Frame:
+        mono_ns, utc_ns = stamp_now()
         self._seq += 1
         w = self._roi.width // self._bin
         h = self._roi.height // self._bin
@@ -287,6 +288,7 @@ class SimCamera(CameraBase):
             width=w,
             height=h,
             bit_depth=self._bit_depth,
-            timestamp_ns=time.monotonic_ns(),
+            capture_mono_ns=mono_ns,
+            capture_utc_ns=utc_ns,
             sequence=self._seq,
         )

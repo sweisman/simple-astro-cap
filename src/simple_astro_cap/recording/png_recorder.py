@@ -12,7 +12,7 @@ from PIL.PngImagePlugin import PngInfo
 
 from simple_astro_cap.camera.abc import Frame
 
-from .abc import RecorderBase
+from .abc import RecorderBase, check_free_space, utc_iso
 
 log = logging.getLogger(__name__)
 
@@ -43,11 +43,13 @@ class PngRecorder(RecorderBase):
         self._bayer_pattern = str(kwargs.get("bayer_pattern", ""))
 
         path.mkdir(parents=True, exist_ok=True)
+        check_free_space(path)
         self._output_dir = path
         self._begin(
             max_frames=int(max_frames) if max_frames is not None else None,
             max_duration=float(max_duration) if max_duration else 0.0,
             target_fps=float(target_fps) if target_fps else 0.0,
+            space_path=path,
         )
         log.info("PNG recording started: %s", path)
 
@@ -64,7 +66,7 @@ class PngRecorder(RecorderBase):
 
     def _write_frame(self, frame: Frame) -> None:
         seq = self._start_sequence + self._count
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+        timestamp = datetime.fromtimestamp(frame.capture_utc_ns / 1e9).strftime("%Y-%m-%d-%H:%M:%S")
         filename = f"{timestamp}-{self._start_sequence:06d}-{seq:06d}.png"
         filepath = self._output_dir / filename  # type: ignore[operator]
 
@@ -79,8 +81,8 @@ class PngRecorder(RecorderBase):
         meta.add_text("BitDepth", str(frame.bit_depth))
         if self._bayer_pattern:
             meta.add_text("BayerPattern", self._bayer_pattern)
-        if frame.timestamp_ns:
-            meta.add_text("TimestampNs", str(frame.timestamp_ns))
+        meta.add_text("CaptureUTC", utc_iso(frame.capture_utc_ns))
+        meta.add_text("CaptureUnixNs", str(frame.capture_utc_ns))
         if self._target_fps > 0:
             meta.add_text("TargetFPS", f"{self._target_fps:.1f}")
         if self._camera_name:
@@ -88,5 +90,9 @@ class PngRecorder(RecorderBase):
         if self._telescope:
             meta.add_text("Telescope", self._telescope)
 
-        img.save(filepath, pnginfo=meta, compress_level=0)
+        try:
+            img.save(filepath, pnginfo=meta, compress_level=0)
+        except OSError:
+            filepath.unlink(missing_ok=True)  # no truncated PNG left behind
+            raise
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import IntEnum
@@ -55,12 +56,27 @@ class ParamRange:
 
 @dataclass
 class Frame:
+    """One acquired frame.
+
+    Both capture stamps are taken by the backend immediately after the SDK
+    returns the frame (see ``stamp_now``) — i.e. readout-complete time as
+    seen by the host, not exposure midpoint, which the polled SDK video
+    modes do not report.
+    """
+
     data: np.ndarray  # 2D uint8 or uint16
     width: int
     height: int
     bit_depth: int
-    timestamp_ns: int  # monotonic nanoseconds
-    sequence: int
+    capture_mono_ns: int  # time.monotonic_ns() — use for intervals
+    capture_utc_ns: int   # time.time_ns() (Unix epoch, UTC) — use for provenance
+    sequence: int         # host-side count of frames received from the SDK
+    sdk_frame_id: int | None = None  # SDK's own frame counter, if it exposes one
+
+
+def stamp_now() -> tuple[int, int]:
+    """Return ``(monotonic_ns, utc_ns)`` for stamping a just-acquired frame."""
+    return time.monotonic_ns(), time.time_ns()
 
 
 class CameraBase(ABC):
@@ -207,3 +223,12 @@ class CameraBase(ABC):
 
     @abstractmethod
     def is_live(self) -> bool: ...
+
+    def sdk_dropped_frames(self) -> int | None:
+        """Frames the SDK/camera itself reports as dropped since start_live().
+
+        These are losses the host-side ``Frame.sequence`` cannot see (the
+        sequence is only assigned to frames that reach us). None means the
+        SDK exposes no such counter.
+        """
+        return None

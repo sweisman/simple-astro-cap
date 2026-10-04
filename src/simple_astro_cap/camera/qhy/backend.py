@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 
-from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
+from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI, stamp_now
 from .constants import ControlId, HdrMode, StreamMode
 from .sdk import QhyError, QhySdk
 
@@ -534,6 +534,7 @@ class QhyCamera(CameraBase):
         return sdk.get_param(self._handle, ctrl)
 
     def _make_frame(self, w: int, h: int, bpp: int) -> Frame:
+        mono_ns, utc_ns = stamp_now()
         self._frame_seq += 1
         if bpp == 16:
             nbytes = h * w * 2
@@ -548,6 +549,7 @@ class QhyCamera(CameraBase):
             width=w,
             height=h,
             bit_depth=bpp,
-            timestamp_ns=time.monotonic_ns(),
+            capture_mono_ns=mono_ns,
+            capture_utc_ns=utc_ns,
             sequence=self._frame_seq,
         )

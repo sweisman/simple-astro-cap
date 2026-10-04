@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 
-from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
+from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI, stamp_now
 from .constants import BayerPattern, ControlType, ImgType
 from .sdk import AsiError, AsiSdk
 
@@ -434,6 +434,16 @@ class AsiCamera(CameraBase):
     def is_live(self) -> bool:
         return self._live
 
+    def sdk_dropped_frames(self) -> int | None:
+        """ASIGetDroppedFrames: frames lost in the SDK/USB since video start."""
+        if not self._live or self._camera_id is None:
+            return None
+        try:
+            return self._get_sdk().get_dropped_frames(self._camera_id)
+        except AsiError as e:
+            log.debug("ASIGetDroppedFrames failed: %s", e)
+            return None
+
     # --- Internal helpers ---
 
     def _require_connected(self) -> None:
@@ -441,6 +451,7 @@ class AsiCamera(CameraBase):
             raise RuntimeError("Camera not connected")
 
     def _make_frame(self, w: int, h: int, bit_depth: int) -> Frame:
+        mono_ns, utc_ns = stamp_now()
         self._frame_seq += 1
         if bit_depth == 16:
             nbytes = h * w * 2
@@ -455,7 +466,8 @@ class AsiCamera(CameraBase):
             width=w,
             height=h,
             bit_depth=bit_depth,
-            timestamp_ns=time.time_ns(),
+            capture_mono_ns=mono_ns,
+            capture_utc_ns=utc_ns,
             sequence=self._frame_seq,
         )
 

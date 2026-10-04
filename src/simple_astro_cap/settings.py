@@ -28,6 +28,9 @@ class AppSettings:
     session_sequence: int = 0
     battery_saver: bool = False
     hdr: bool = False  # hardware HDR; applied on connect if the camera supports it
+    # RAM budget for frames waiting to be written while recording; absorbs
+    # disk stalls. Overflowing it drops frames (counted, never silent).
+    record_queue_mb: int = 1024
 
 
 def load_settings() -> AppSettings:

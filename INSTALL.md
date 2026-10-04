@@ -49,12 +49,13 @@ This installs:
 
 ### Optional
 
-- **ffmpeg** — required for MKV (FFV1 lossless) recording:
+- **ffmpeg** and **mkvtoolnix** — required for MKV (FFV1 lossless) recording.
+  ffmpeg encodes; `mkvmerge` stamps each frame with its real capture time:
   ```bash
   # Arch
-  sudo pacman -S ffmpeg
+  sudo pacman -S ffmpeg mkvtoolnix-cli
   # Debian/Ubuntu
-  sudo apt install ffmpeg
+  sudo apt install ffmpeg mkvtoolnix
   ```
 
 ---
@@ -244,8 +245,8 @@ python run.py --sim
 **QHY SDK fails silently**:
 - See the note on bundled runtime libraries in §2
 
-**ffmpeg not found (MKV recording)**:
-- Install ffmpeg from your package manager
+**ffmpeg / mkvmerge not found (MKV recording)**:
+- Install ffmpeg and mkvtoolnix from your package manager
 - Only required if you want to record in MKV format; PNG and SER work without it
 
 ---
@@ -281,4 +282,4 @@ this project.
 | udev rules | Required | Required | Required | Required | Not needed |
 | fxload | Required | Not needed | Not needed | Not needed | Not needed |
 | Firmware files | Required | Not needed | Not needed | Not needed | Not needed |
-| ffmpeg | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) |
+| ffmpeg + mkvtoolnix | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) | Optional (MKV) |

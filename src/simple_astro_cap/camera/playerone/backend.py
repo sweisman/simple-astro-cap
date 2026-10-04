@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import time
 
 import numpy as np
 
-from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
+from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI, stamp_now
 from .constants import POAConfig, POAErrors, POAImgFormat, POAValueType
 from .sdk import PlayerOneError, PlayerOneSdk
 
@@ -404,6 +403,11 @@ class PlayerOneCamera(CameraBase):
     def is_live(self) -> bool:
         return self._live
 
+    def sdk_dropped_frames(self) -> int | None:
+        if not self._live or self._camera_id is None:
+            return None
+        return self._get_sdk().get_dropped_images(self._camera_id)
+
     # --- Internal helpers ---
 
     def _require_connected(self) -> None:
@@ -411,6 +415,7 @@ class PlayerOneCamera(CameraBase):
             raise RuntimeError("Camera not connected")
 
     def _make_frame(self, w: int, h: int, bit_depth: int) -> Frame:
+        mono_ns, utc_ns = stamp_now()
         self._frame_seq += 1
         if bit_depth == 16:
             nbytes = h * w * 2
@@ -425,7 +430,8 @@ class PlayerOneCamera(CameraBase):
             width=w,
             height=h,
             bit_depth=bit_depth,
-            timestamp_ns=time.time_ns(),
+            capture_mono_ns=mono_ns,
+            capture_utc_ns=utc_ns,
             sequence=self._frame_seq,
         )
 

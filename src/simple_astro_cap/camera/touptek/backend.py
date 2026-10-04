@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 
-from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI
+from ..abc import CameraBase, CameraInfo, Frame, Param, ParamRange, ROI, stamp_now
 from .constants import ToupOption
 from .sdk import ToupcamError, ToupcamSdk
 
@@ -27,6 +27,8 @@ class ToupcamCamera(CameraBase):
         self._camera_id_str: str | None = None
         self._connected = False
         self._live = False
+        self._sdk_last_seq: int | None = None
+        self._sdk_dropped = 0
         self._info: CameraInfo | None = None
         self._roi: ROI | None = None
         self._bin_mode = 1
@@ -344,6 +346,8 @@ class ToupcamCamera(CameraBase):
             return
         self._get_sdk().start_pull_mode(self._handle)
         self._live = True
+        self._sdk_last_seq: int | None = None
+        self._sdk_dropped = 0
         log.info("Live streaming started (pull mode)")
 
     def stop_live(self) -> None:
@@ -370,10 +374,18 @@ class ToupcamCamera(CameraBase):
         if info is None:
             time.sleep(0.002)  # PullImage is non-blocking; don't spin a core
             return None
-        return self._make_frame(info.width, info.height, self._bit_depth)
+        # FrameInfoV3.seq is the SDK's own frame counter: a jump means the
+        # SDK discarded frames we never pulled.
+        if self._sdk_last_seq is not None and info.seq > self._sdk_last_seq + 1:
+            self._sdk_dropped += info.seq - self._sdk_last_seq - 1
+        self._sdk_last_seq = info.seq
+        return self._make_frame(info.width, info.height, self._bit_depth, sdk_frame_id=info.seq)
 
     def is_live(self) -> bool:
         return self._live
+
+    def sdk_dropped_frames(self) -> int | None:
+        return self._sdk_dropped if self._live else None
 
     # --- Internal helpers ---
 
@@ -381,7 +393,9 @@ class ToupcamCamera(CameraBase):
         if not self._connected:
             raise RuntimeError("Camera not connected")
 
-    def _make_frame(self, w: int, h: int, bit_depth: int) -> Frame:
+    def _make_frame(self, w: int, h: int, bit_depth: int,
+                    sdk_frame_id: int | None = None) -> Frame:
+        mono_ns, utc_ns = stamp_now()
         self._frame_seq += 1
         if bit_depth == 16:
             nbytes = h * w * 2
@@ -396,8 +410,10 @@ class ToupcamCamera(CameraBase):
             width=w,
             height=h,
             bit_depth=bit_depth,
-            timestamp_ns=time.time_ns(),
+            capture_mono_ns=mono_ns,
+            capture_utc_ns=utc_ns,
             sequence=self._frame_seq,
+            sdk_frame_id=sdk_frame_id,
         )
 
     def _parse_device_id(self, camera_id: str) -> bytes:

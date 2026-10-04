@@ -506,8 +506,10 @@ class CameraPanel(QGroupBox):
         # them look live while the camera ignores them.
         # Auto-gain also owns gain_spin (_on_auto_gain_toggled), so honour it
         # here too or turning HDR off would re-enable gain under auto-gain.
+        # Gain stays adjustable while recording (as exposure does); changes
+        # are logged to the session .txt. Bin/offset stay locked.
         self.gain_spin.setEnabled(
-            usable and not hdr_on and not self.auto_gain_check.isChecked())
+            self._connected and not hdr_on and not self.auto_gain_check.isChecked())
         self.offset_spin.setEnabled(usable and not hdr_on)
 
         if hdr_on:
@@ -702,9 +704,7 @@ class CameraPanel(QGroupBox):
         self._recording = recording
         self.connect_btn.setEnabled(not recording)
         self._update_hdr_enabled()
-        self.bin_combo.setEnabled(not recording)
-        self.landscape_radio.setEnabled(not recording)
-        self.portrait_radio.setEnabled(not recording)
+        # Orientation stays live: portrait only rotates the display.
         self._apply_hdr_locks()
 
     def set_bin_modes(self, modes: list[int], sensor_w: int = 0, sensor_h: int = 0) -> None:

@@ -11,7 +11,7 @@ import numpy as np
 
 from simple_astro_cap.camera.abc import Frame
 
-from .abc import RecorderBase
+from .abc import RecorderBase, check_free_space
 
 log = logging.getLogger(__name__)
 
@@ -21,17 +21,31 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def mkvmerge_available() -> bool:
+    """Check whether mkvmerge (mkvtoolnix) is on PATH."""
+    return shutil.which("mkvmerge") is not None
+
+
 class MkvRecorder(RecorderBase):
     """Records frames as lossless FFV1 video in an MKV container.
 
     Spawns an ffmpeg subprocess and pipes raw pixel data to its stdin.
     Supports 8-bit (gray) and 16-bit (gray16le) mono frames.
+
+    A rawvideo pipe cannot carry per-frame timestamps, so ffmpeg encodes
+    to a temporary ``.part.mkv`` at a nominal rate while each frame's
+    capture time is collected. On stop the capture times are written as a
+    Matroska v2 timestamps file (``<name>.timestamps.txt``, kept as
+    provenance) and ``mkvmerge`` remuxes the video with them, so the
+    file's timeline is the real capture cadence rather than an assumed fps.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._proc: subprocess.Popen | None = None
         self._path: Path | None = None
+        self._part_path: Path | None = None
+        self._capture_mono_ns: list[int] = []
 
     def start(self, path: Path, **kwargs: object) -> None:
         width = int(kwargs.get("width", 0))
@@ -46,18 +60,23 @@ class MkvRecorder(RecorderBase):
 
         if not ffmpeg_available():
             raise RuntimeError("ffmpeg not found on PATH")
+        if not mkvmerge_available():
+            raise RuntimeError("mkvmerge not found on PATH (install mkvtoolnix) — "
+                               "needed to write real per-frame timestamps")
 
         # Ensure .mkv extension
         if path.suffix.lower() != ".mkv":
             path = path.with_suffix(".mkv")
         path.parent.mkdir(parents=True, exist_ok=True)
+        check_free_space(path.parent)
         self._path = path
+        self._part_path = path.with_suffix(".part.mkv")
+        self._capture_mono_ns = []
 
         pix_fmt = "gray16le" if bit_depth > 8 else "gray"
 
-        # Use target FPS for the output file's frame rate metadata.
-        # If 0 (max rate), default to 25 — ffmpeg requires a rate,
-        # and the actual timing is best-effort anyway.
+        # Nominal rate only — the real per-frame timestamps replace it at
+        # stop(). ffmpeg requires some rate for rawvideo input.
         output_fps = float(target_fps) if target_fps and float(target_fps) > 0 else 25.0
 
         cmd = [
@@ -85,7 +104,7 @@ class MkvRecorder(RecorderBase):
         if bayer_pattern:
             cmd += ["-metadata", f"bayer_pattern={bayer_pattern}"]
 
-        cmd.append(str(path))
+        cmd.append(str(self._part_path))
 
         self._proc = subprocess.Popen(
             cmd,
@@ -98,6 +117,7 @@ class MkvRecorder(RecorderBase):
             max_frames=int(max_frames) if max_frames is not None else None,
             max_duration=float(max_duration) if max_duration else 0.0,
             target_fps=float(target_fps) if target_fps else 0.0,
+            space_path=path.parent,
         )
         log.info("MKV recording started: %s (%dx%d %d-bit FFV1)", path, width, height, bit_depth)
 
@@ -107,7 +127,41 @@ class MkvRecorder(RecorderBase):
                 return
             self._recording = False
             self._close_proc()
+            self._apply_timestamps()
         log.info("MKV recording stopped: %d frames written to %s", self._count, self._path)
+
+    @property
+    def timestamps_path(self) -> Path | None:
+        return self._path.with_suffix(".timestamps.txt") if self._path else None
+
+    def _apply_timestamps(self) -> None:
+        """Write the v2 timestamps file and remux the part file with it."""
+        part, final, ts_path = self._part_path, self._path, self.timestamps_path
+        if part is None or final is None or ts_path is None or not part.exists():
+            return
+        if not self._capture_mono_ns:
+            part.unlink(missing_ok=True)
+            return
+        t0 = self._capture_mono_ns[0]
+        lines = ["# timestamp format v2"]
+        lines += [f"{(t - t0) / 1e6:.6f}" for t in self._capture_mono_ns]
+        try:
+            ts_path.write_text("\n".join(lines) + "\n")
+            result = subprocess.run(
+                ["mkvmerge", "--quiet", "-o", str(final),
+                 "--timestamps", f"0:{ts_path}", str(part)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log.error("Could not apply MKV timestamps (%s); untimed video kept at %s", e, part)
+            return
+        # mkvmerge: 0 = ok, 1 = warnings (output still written), 2 = error
+        if result.returncode >= 2:
+            log.error("mkvmerge failed (%d): %s; untimed video kept at %s",
+                      result.returncode, result.stdout.decode(errors="replace")[-500:], part)
+            final.unlink(missing_ok=True)
+            return
+        part.unlink(missing_ok=True)
 
     def _close_proc(self) -> None:
         """Close ffmpeg's stdin and reap it; kill on timeout. Idempotent."""
@@ -132,10 +186,7 @@ class MkvRecorder(RecorderBase):
     def _write_frame(self, frame: Frame) -> None:
         if self._proc is None or self._proc.stdin is None:
             return
-        try:
-            self._proc.stdin.write(memoryview(np.ascontiguousarray(frame.data)))
-        except BrokenPipeError:
-            log.error("ffmpeg pipe broken — stopping recording")
-            self._recording = False
-            self._stop_reason = "error"
-            self._close_proc()
+        # A broken pipe (ffmpeg died, e.g. disk full) propagates as OSError;
+        # RecorderBase puts the recorder into its error state.
+        self._proc.stdin.write(memoryview(np.ascontiguousarray(frame.data)))
+        self._capture_mono_ns.append(frame.capture_mono_ns)

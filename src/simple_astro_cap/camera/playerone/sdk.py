@@ -252,6 +252,18 @@ class PlayerOneSdk:
             return True
         return False
 
+    def get_dropped_images(self, cam_id: int) -> int | None:
+        """POAGetDroppedImagesCount, or None if this SDK build lacks it."""
+        fn = getattr(self._lib, "POAGetDroppedImagesCount", None)
+        if fn is None:
+            return None
+        fn.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        fn.restype = ctypes.c_int
+        n = ctypes.c_int(0)
+        if fn(cam_id, ctypes.byref(n)) != POAErrors.OK:
+            return None
+        return n.value
+
     def get_configs_count(self, cam_id: int) -> int:
         count = ctypes.c_int(0)
         self._check("POAGetConfigsCount",

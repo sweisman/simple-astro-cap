@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -42,7 +42,7 @@ from simple_astro_cap.gui.recording_panel import RecordingPanel
 from simple_astro_cap.settings import AppSettings, load_settings, save_settings
 from simple_astro_cap.pipeline.auto_exposure import SoftwareAutoExposure
 from simple_astro_cap.pipeline.simple import SimpleHarness
-from simple_astro_cap.recording.abc import RecorderBase
+from simple_astro_cap.recording.abc import RecorderBase, utc_iso
 from simple_astro_cap.recording.mkv_recorder import MkvRecorder
 from simple_astro_cap.recording.png_recorder import PngRecorder
 from simple_astro_cap.recording.ser_recorder import SerRecorder
@@ -58,13 +58,16 @@ class MainWindow(QMainWindow):
         self._display_bridge = DisplayBridge()
         self._recorder: RecorderBase | None = None
         self._rec_meta: dict | None = None  # metadata captured at recording start
-        self._fps_count = 0
+        self._latest_seq = 0  # sequence of the newest frame seen, for fps
+        self._fps_prev_seq = 0
         self._fps_display = 0.0
         self._portrait = False
         self._display_focus: str | None = None  # "brightness" or "contrast"
         self._histogram_counter = 0
         self._histogram_interval = 4  # update histogram every Nth frame
-        self._last_frame: Frame | None = None
+        self._snap_pending = False  # Space pressed; waiting for the next frame
+        self._rec_baseline: dict[str, int] = {}  # loss counters at recording start
+        self._rec_events: list[str] = []  # parameter changes made while recording
         self._soft_auto: SoftwareAutoExposure | None = None
         self._last_display_time = 0.0  # monotonic seconds, for battery saver
 
@@ -290,6 +293,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         # Display bridge -> live view
         self._display_bridge.frame_ready.connect(self._on_display_frame)
+        self._display_bridge.snapshot_ready.connect(self._save_snapshot)
 
         # Camera panel
         self._camera_panel.camera_selected.connect(self._on_camera_selected)
@@ -436,8 +440,8 @@ class MainWindow(QMainWindow):
         self._update_zoom_levels(zw, zh)
 
         # Start live view
-        self._harness = SimpleHarness(self._camera)
-        self._harness.frame_transform = self._make_transform()
+        self._harness = SimpleHarness(
+            self._camera, queue_bytes=self._settings.record_queue_mb * 1024 * 1024)
         self._harness.add_consumer(self._display_bridge)
         self._harness.start()
 
@@ -452,11 +456,12 @@ class MainWindow(QMainWindow):
         self._remove_soft_auto()
         if self._recorder is not None:
             self._finish_recording()
-        if self._harness and self._harness.is_running():
+        if self._harness:
             self._harness.stop()
             self._harness = None
+        self._display_bridge.cancel_snapshot()
+        self._display_bridge.take()  # never show a frame from a previous session
         self._camera.disconnect()
-        self._last_frame = None  # never snap a frame from a previous session
         self._camera_panel.set_connected(False)
         self._recording_panel.setEnabled(False)
         self._lens_group.setEnabled(False)
@@ -527,17 +532,21 @@ class MainWindow(QMainWindow):
         adjusted = contrast * (data.astype(np.float32) - mid) + mid + brightness * (max_val / 255.0)
         return np.clip(adjusted, 0, max_val).astype(data.dtype)
 
-    def _on_display_frame(self, frame: Frame) -> None:
-        # Frames queued by a previous session's worker can arrive after a
-        # reconnect; drop anything that doesn't match the connected camera.
+    def _on_display_frame(self) -> None:
+        frame = self._display_bridge.take()
+        if frame is None:
+            return
+        # A frame left by a previous session's capture thread can arrive
+        # after a reconnect; drop anything that doesn't match the camera.
         if not self._camera.is_connected() or frame.bit_depth != self._camera.get_bit_depth():
             return
         if frame.sequence == 1:
             log.info("First frame displayed: %dx%d %dbit min=%d max=%d",
                      frame.width, frame.height, frame.bit_depth,
                      frame.data.min(), frame.data.max())
-        self._fps_count += 1
-        self._last_frame = frame
+        # The mailbox skips frames when the GUI is slower than the camera,
+        # so count acquisition rate from the sequence, not from paints.
+        self._latest_seq = frame.sequence
 
         # Battery saver: skip display updates to ~1 fps while recording
         if (self._recorder is not None
@@ -567,7 +576,12 @@ class MainWindow(QMainWindow):
         else:
             step = 1
         if step > 1:
-            display_data = np.ascontiguousarray(display_data[::step, ::step])
+            display_data = display_data[::step, ::step]
+        if self._portrait:
+            # Display-only: recordings and snaps keep native sensor
+            # orientation so the Bayer pattern tag stays valid.
+            display_data = np.rot90(display_data)
+        display_data = np.ascontiguousarray(display_data)
 
         # Apply brightness/contrast on (potentially smaller) data
         display_data = self._apply_display_adjustments(display_data)
@@ -577,15 +591,22 @@ class MainWindow(QMainWindow):
             width=dw,
             height=dh,
             bit_depth=frame.bit_depth,
-            timestamp_ns=frame.timestamp_ns,
+            capture_mono_ns=frame.capture_mono_ns,
+            capture_utc_ns=frame.capture_utc_ns,
             sequence=frame.sequence,
         )
         self._live_view.update_frame(display_frame)
 
     def _update_fps(self) -> None:
-        self._fps_display = self._fps_count
-        self._fps_count = 0
+        delta = self._latest_seq - self._fps_prev_seq
+        if delta < 0:  # sequence restarted with live view
+            delta = self._latest_seq
+        self._fps_prev_seq = self._latest_seq
+        self._fps_display = delta
         self._status_fps.setText(f"{self._fps_display:.0f} fps")
+        if self._harness is not None and self._harness.error is not None:
+            self._on_harness_error()
+            return
         # Update sensor temperature
         if self._camera.is_connected():
             temp = self._camera.get_sensor_temperature()
@@ -599,9 +620,11 @@ class MainWindow(QMainWindow):
             if self._recorder.is_recording():
                 n = self._recorder.frames_written()
                 fps = self._recorder.actual_fps
-                self._status_rec.setText(f"REC: {n} frames | {fps:.1f} fps")
+                lost = self._recording_losses()
+                lost_txt = f" | LOST {lost}" if lost else ""
+                self._status_rec.setText(f"REC: {n} frames | {fps:.1f} fps{lost_txt}")
             else:
-                # Recorder auto-stopped (max frames reached)
+                # Recorder auto-stopped (frame/time limit, low disk, or error)
                 self._finish_recording()
 
     # --- Camera settings ---
@@ -635,14 +658,27 @@ class MainWindow(QMainWindow):
     def _on_exposure_changed(self, us: float) -> None:
         if self._camera.is_connected():
             self._camera.set_exposure(us)
+            self._log_rec_event(f"exposure_us={us:.0f}")
 
     def _on_gain_changed(self, value: float) -> None:
         if self._camera.is_connected():
             self._camera.set_gain(value)
+            self._log_rec_event(f"gain={value:.0f}")
 
     def _on_offset_changed(self, value: float) -> None:
         if self._camera.is_connected():
             self._camera.set_param(Param.OFFSET, value)
+            self._log_rec_event(f"offset={value:.0f}")
+
+    def _log_rec_event(self, change: str) -> None:
+        """Record a manual parameter change made mid-recording (session .txt).
+
+        SER/MKV carry no per-frame exposure/gain, so this is the record of
+        when the data's acquisition settings changed.
+        """
+        if self._recorder is not None and self._recorder.is_recording():
+            stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+            self._rec_events.append(f"{stamp} {change}")
 
     def _on_auto_exposure_toggled(self, enabled: bool) -> None:
         if self._camera.is_connected() and self._camera.supports_auto_exposure():
@@ -752,31 +788,11 @@ class MainWindow(QMainWindow):
 
     def _on_orientation_changed(self, portrait: bool) -> None:
         self._portrait = portrait
-        if self._harness:
-            self._harness.frame_transform = self._make_transform()
         # Recalculate zoom for new display dimensions
         if self._camera.is_connected():
             roi = self._camera.get_roi()
             w, h = (roi.height, roi.width) if portrait else (roi.width, roi.height)
             self._update_zoom_levels(w, h)
-
-    def _make_transform(self):
-        """Return a frame transform function based on current orientation."""
-        if not self._portrait:
-            return None
-
-        def rotate_frame(frame: Frame) -> Frame:
-            rotated = np.rot90(frame.data).copy()
-            h, w = rotated.shape
-            return Frame(
-                data=rotated,
-                width=w,
-                height=h,
-                bit_depth=frame.bit_depth,
-                timestamp_ns=frame.timestamp_ns,
-                sequence=frame.sequence,
-            )
-        return rotate_frame
 
     def _on_zoom_changed(self, scale: float | None) -> None:
         self._live_view.zoom_scale = scale
@@ -797,26 +813,39 @@ class MainWindow(QMainWindow):
     # --- Recording ---
 
     def _on_capture_single(self) -> None:
-        if not self._camera.is_connected() or self._last_frame is None:
+        """Arm a snapshot of the next frame acquired after this request."""
+        if not self._camera.is_connected() or not self._harness or not self._harness.is_running():
             return
-        frame = self._last_frame
-        extra = {"Gain": f"{self._camera.get_gain():.0f}"}
-        if self._camera_panel.hdr_check.isChecked():
-            extra["Hdr"] = "hardware"
-        stem = self._next_snap_stem()
-        filename = self._save_snapshot(frame, stem, "", extra)
-        self._status_rec.setText(f"Snap saved: {filename}")
+        self._snap_pending = True
+        self._display_bridge.request_snapshot()
+        self._status_rec.setText("Snap: waiting for next frame...")
 
-    def _next_snap_stem(self) -> str:
-        """Allocate the next snapshot sequence number and return the file stem."""
+    def _next_snap_stem(self, frame: Frame) -> str:
+        """Allocate the next snapshot sequence number; stem uses capture time."""
         seq = self._settings.snap_sequence
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+        timestamp = datetime.fromtimestamp(frame.capture_utc_ns / 1e9).strftime("%Y-%m-%d-%H:%M:%S")
         self._settings.snap_sequence = seq + 1
         save_settings(self._settings)
         return f"{timestamp}-{seq:06d}"
 
-    def _save_snapshot(self, frame: Frame, stem: str, suffix: str,
-                       extra_meta: dict[str, str]) -> str:
+    def _save_snapshot(self, frame: Frame) -> None:
+        """Slot for DisplayBridge.snapshot_ready: write the frame to snapshots/."""
+        if not self._snap_pending or not self._camera.is_connected():
+            return
+        self._snap_pending = False
+        extra = {"Gain": f"{self._camera.get_gain():.0f}",
+                 "ExposureUs": f"{self._camera.get_exposure():.0f}"}
+        if self._camera_panel.hdr_check.isChecked():
+            extra["Hdr"] = "hardware"
+        try:
+            filename = self._write_snapshot(frame, self._next_snap_stem(frame), extra)
+        except Exception as e:
+            log.error("Snapshot failed: %s", e)
+            QMessageBox.warning(self, "Snapshot Error", f"Failed to save snapshot:\n{e}")
+            return
+        self._status_rec.setText(f"Snap saved: {filename}")
+
+    def _write_snapshot(self, frame: Frame, stem: str, extra_meta: dict[str, str]) -> str:
         """Write one frame to snapshots/ as PNG or TIFF; returns the filename."""
         info = self._camera.get_info()
         snap_dir = self._recording_panel.output_dir / "snapshots"
@@ -828,10 +857,12 @@ class MainWindow(QMainWindow):
         else:
             img = Image.fromarray(frame.data.astype(np.uint16), mode="I;16")
 
+        capture_utc = utc_iso(frame.capture_utc_ns)
         if snap_fmt == "TIFF":
-            filename = f"{stem}{suffix}.tiff"
+            filename = f"{stem}.tiff"
             # TIFF tag 270 = ImageDescription
-            desc_parts = [f"Software=Simple Astro Cap", f"BitDepth={frame.bit_depth}"]
+            desc_parts = ["Software=Simple Astro Cap", f"BitDepth={frame.bit_depth}",
+                          f"CaptureUTC={capture_utc}"]
             if info.bayer_pattern:
                 desc_parts.append(f"BayerPattern={info.bayer_pattern}")
             desc_parts += [f"{k}={v}" for k, v in extra_meta.items()]
@@ -840,14 +871,14 @@ class MainWindow(QMainWindow):
             ifd[270] = "; ".join(desc_parts)
             img.save(snap_dir / filename, format="TIFF", tiffinfo=ifd)
         else:
-            filename = f"{stem}{suffix}.png"
+            filename = f"{stem}.png"
             meta = PngInfo()
             meta.add_text("Software", "Simple Astro Cap")
             meta.add_text("BitDepth", str(frame.bit_depth))
             if info.bayer_pattern:
                 meta.add_text("BayerPattern", info.bayer_pattern)
-            if frame.timestamp_ns:
-                meta.add_text("TimestampNs", str(frame.timestamp_ns))
+            meta.add_text("CaptureUTC", capture_utc)
+            meta.add_text("CaptureUnixNs", str(frame.capture_utc_ns))
             for k, v in extra_meta.items():
                 meta.add_text(k, v)
             img.save(snap_dir / filename, pnginfo=meta)
@@ -880,12 +911,11 @@ class MainWindow(QMainWindow):
         seq = self._settings.session_sequence
         stem = f"{timestamp}-{seq:06d}"
 
-        # Common frame dimensions (after rotation). get_roi() is already the
-        # binned output size on every backend.
+        # Recordings are always in native sensor orientation (portrait is a
+        # display-only rotation). get_roi() is already the binned output
+        # size on every backend.
         roi = self._camera.get_roi()
         frame_w, frame_h = roi.width, roi.height
-        if self._portrait:
-            frame_w, frame_h = frame_h, frame_w
         bit_depth = self._camera.get_bit_depth()
         common_kw = dict(
             width=frame_w,
@@ -944,7 +974,13 @@ class MainWindow(QMainWindow):
             max_time=max_time,
             max_frames=max_frames,
         )
-        self._harness.add_consumer(recorder)
+        self._rec_baseline = dict(
+            queue_overflows=self._harness.queue_overflows,
+            sdk_dropped=self._camera.sdk_dropped_frames() or 0,
+        )
+        self._harness.queue_peak_bytes = 0
+        self._rec_events = []
+        self._harness.add_consumer(recorder, queued=True)
         self._recording_panel.set_recording(True)
         self._camera_panel.set_recording(True)
         self._status_rec.setText("REC")
@@ -960,6 +996,10 @@ class MainWindow(QMainWindow):
         if self._recorder is None:
             return
         if self._harness:
+            # Frames captured before the stop request are still queued;
+            # let them reach the file before closing it.
+            if self._recorder.is_recording() and not self._harness.drain():
+                log.warning("Record queue did not drain; remaining frames discarded")
             self._harness.remove_consumer(self._recorder)
         if self._recorder.is_recording():
             self._recorder.stop()
@@ -968,6 +1008,8 @@ class MainWindow(QMainWindow):
         offered = self._recorder.frames_offered
         dropped = self._recorder.frames_dropped
         stop_reason = self._recorder.stop_reason
+        rec_error = self._recorder.error
+        losses = self._loss_counters()
 
         # Advance session sequence: PNG uses one per frame, SER/MKV use one per session
         is_png = isinstance(self._recorder, PngRecorder)
@@ -978,25 +1020,64 @@ class MainWindow(QMainWindow):
         save_settings(self._settings)
 
         # Write session summary txt
-        self._write_session_txt(written, fps, is_png, offered, dropped)
+        self._write_session_txt(written, fps, is_png, offered, dropped, losses, rec_error)
 
         self._rec_meta = None
         self._recorder = None
         self._recording_panel.set_recording(False)
         self._camera_panel.set_recording(False)
-        drop_msg = f", {dropped} dropped" if dropped > 0 else ""
-        if stop_reason == "frame_limit":
-            reason_msg = "Frame limit reached. "
-        elif stop_reason == "time_limit":
-            reason_msg = "Time limit reached. "
-        else:
-            reason_msg = ""
+        # Queue overflows also show up as sequence gaps at the recorder.
+        lost = max(dropped, losses["queue_overflows"]) + (losses["sdk_dropped"] or 0)
+        drop_msg = f", {lost} LOST" if lost > 0 else ""
+        reason_msg = {
+            "frame_limit": "Frame limit reached. ",
+            "time_limit": "Time limit reached. ",
+            "disk_low": "STOPPED: disk nearly full. ",
+            "error": "STOPPED ON ERROR. ",
+        }.get(stop_reason, "")
         self._status_rec.setText(f"{reason_msg}Saved {written} frames ({fps:.1f} fps{drop_msg})")
-        log.info("Recording finished: %d frames, %.1f fps, %d dropped, reason=%s",
-                 written, fps, dropped, stop_reason or "manual")
+        log.info("Recording finished: %d frames, %.1f fps, %d lost, reason=%s",
+                 written, fps, lost, stop_reason or "manual")
+        if stop_reason in ("error", "disk_low"):
+            detail = (f"Write failed: {rec_error}" if rec_error
+                      else "Free disk space fell below the safety margin.")
+            QMessageBox.critical(
+                self, "Recording Stopped",
+                f"Recording stopped after {written} frames.\n\n{detail}\n\n"
+                f"Frames written before the stop were saved.")
+
+    def _loss_counters(self) -> dict[str, int | None]:
+        """Frame losses since recording started, by where they happened."""
+        base = self._rec_baseline
+        sdk = self._camera.sdk_dropped_frames() if self._camera.is_connected() else None
+        overflows = self._harness.queue_overflows if self._harness else base.get("queue_overflows", 0)
+        return dict(
+            sdk_dropped=None if sdk is None else max(0, sdk - base.get("sdk_dropped", 0)),
+            queue_overflows=overflows - base.get("queue_overflows", 0),
+        )
+
+    def _recording_losses(self) -> int:
+        """Total frames lost so far in the current recording (status bar)."""
+        c = self._loss_counters()
+        # Queue overflows also show up as sequence gaps at the recorder.
+        return (c["sdk_dropped"] or 0) + max(c["queue_overflows"], self._recorder.frames_dropped)
+
+    def _on_harness_error(self) -> None:
+        """Capture thread died or would not stop: surface it, end recording."""
+        err = self._harness.error
+        log.error("Capture pipeline failed: %s", err)
+        if self._recorder is not None:
+            self._finish_recording()
+        self._status_rec.setText(f"CAPTURE FAILED: {err}")
+        self._harness.error = None  # report once
+        QMessageBox.critical(self, "Capture Failed",
+                             f"The camera capture thread stopped:\n{err}\n\n"
+                             "Disconnect and reconnect the camera.")
 
     def _write_session_txt(self, frames: int, actual_fps: float,
-                           is_png: bool, offered: int, dropped: int) -> None:
+                           is_png: bool, offered: int, dropped: int,
+                           losses: dict[str, int | None],
+                           error: BaseException | None) -> None:
         """Write a session summary text file."""
         meta = self._rec_meta
         if meta is None:
@@ -1022,7 +1103,13 @@ class MainWindow(QMainWindow):
         lines += [
             f"frames_written: {frames}",
             f"frames_offered: {offered}",
-            f"frames_dropped: {dropped}",
+            # Where frames were lost: inside the SDK/camera (only if the SDK
+            # reports it — invisible to the sequence check), and on the host
+            # between SDK and file (sequence gaps; includes queue overflows,
+            # i.e. the disk not keeping up).
+            "frames_lost_sdk: " + ("n/a" if losses["sdk_dropped"] is None else str(losses["sdk_dropped"])),
+            f"frames_lost_host: {dropped}",
+            f"frames_lost_queue_overflow: {losses['queue_overflows']}",
             f"frames_skipped: {skipped}",
             f"duration_s: {elapsed:.1f}",
             f"actual_fps: {actual_fps:.2f}",
@@ -1047,6 +1134,17 @@ class MainWindow(QMainWindow):
             lines.append(f"bayer_pattern: {meta['bayer_pattern']}")
         if meta.get("hdr"):
             lines.append("hdr: hardware")
+        if meta["format"] == "MKV" and isinstance(self._recorder, MkvRecorder):
+            lines.append(f"frame_timestamps: {self._recorder.timestamps_path.name}")
+        lines.append("timestamps: host time when the SDK returned each frame "
+                     "(readout complete, not exposure midpoint)")
+        if self._camera_panel.auto_exposure_check.isChecked() or self._soft_auto is not None:
+            lines.append("auto_exposure: on (per-frame exposure not recorded)")
+        if self._camera_panel.auto_gain_check.isChecked():
+            lines.append("auto_gain: on (per-frame gain not recorded)")
+        if error is not None:
+            lines.append(f"error: {error}")
+        lines += [f"change: {e}" for e in self._rec_events]
         try:
             txt_path.write_text("\n".join(lines) + "\n")
         except Exception as e:
@@ -1124,6 +1222,7 @@ class MainWindow(QMainWindow):
             lens_description=self._lens_edit.text(),
             sidebar_width=self._splitter.sizes()[1] if len(self._splitter.sizes()) > 1 else 250,
             snap_sequence=self._settings.snap_sequence,
+            record_queue_mb=self._settings.record_queue_mb,
             session_sequence=self._settings.session_sequence,
             hdr=self._settings.hdr,
         )
